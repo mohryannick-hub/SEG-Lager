@@ -1,6 +1,6 @@
 'use strict';
 /* Gemeinsamer Plan über die db-Funktion der Artifact-Seite (nur dort verfügbar).
-   Dokument plans/main = {json, at}. Schreiben darf nur, wer die Seite bearbeiten darf (Editor/Eigentümer);
+   Dokument plans/main = {json, at}. Schreiben darf, wer in der Teilen-Funktion mindestens „Mitwirkender“ (Contributor) ist;
    alle anderen sehen den Plan live, aber ohne Änderungsmöglichkeit. */
 (function () {
   if (!window.claude || !claude.use) return;
@@ -15,7 +15,10 @@
     if (json === lastJson) return;
     writing = true; stat('Speichert …');
     try { await doc.set({json, at: Date.now()}); lastJson = json; stat('Gemeinsamer Plan · gespeichert', 'okk'); }
-    catch (e) { stat('Speichern fehlgeschlagen', 'err'); }
+    catch (e) {
+      if (e && e.code === 'invalid_argument') { canWrite = false; RO = true; applyRO(); stat('Gemeinsamer Plan · nur Ansicht'); }
+      else stat('Speichern fehlgeschlagen', 'err');
+    }
     writing = false;
     if (again) { again = false; push(); }
   }
@@ -36,7 +39,8 @@
     let db = null, user = null;
     try { db = await claude.use('db'); user = await claude.use('user'); } catch (e) {}
     if (!db) { stat('Nur auf diesem Gerät gespeichert'); return; }
-    canWrite = !!(user && user.canEdit && user.canEdit());
+    let cw = null; try { cw = user && user.can ? await user.can('data.write') : null; } catch (e) {}
+    canWrite = !!user && cw !== false; // null = unbekannt: Bearbeitung zulassen, ein abgelehntes Schreiben entscheidet
     RO = !canWrite; applyRO();
     doc = db.doc('plans/main');
     btn.onclick = async () => { btn.hidden = true; lastJson = ''; await push(); };

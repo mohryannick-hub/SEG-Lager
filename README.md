@@ -12,7 +12,7 @@ Statische Web-App (kein Build nötig): `index.html` im Browser öffnen. three.js
 - **Fixieren**: gesperrte Objekte (Schloss-Symbol) lassen sich weder ziehen noch drehen noch löschen; Inhalt bleibt editierbar
 - **Gruppen** für Regale/Schränke, Ein-/Ausblenden einzelner Objekte oder Gruppen, „Nur diese anzeigen“ (Gruppe oder Objekt)
 - **Dunkelmodus** (folgt dem System, per Knopf umschaltbar)
-- **Gemeinsamer Plan** (nur in der veröffentlichten Artifact-Fassung): Der Plan liegt zentral, alle sehen ihn live; nur Editor/Eigentümer dürfen ändern, alle anderen haben eine reine Ansicht (inkl. 2D/3D/Regalansicht)
+- **Gemeinsamer Plan** (nur in der veröffentlichten Artifact-Fassung): Der Plan liegt zentral, alle sehen ihn live; bearbeiten dürfen Eigentümer, Editoren und Mitwirkende (je nach Freigabe in der Teilen-Funktion), alle anderen haben eine reine Ansicht (inkl. 2D/3D/Regalansicht)
 - Autosave (localStorage), Undo/Redo, JSON-Export/-Import, Druckansicht mit Packliste
 
 Die Raummaße im Beispielplan (900 × 600 cm) sind Platzhalter.
