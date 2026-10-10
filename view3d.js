@@ -271,17 +271,7 @@ function dropKiste(k, e, noSnap) {
     })));
   }
   if (best) {
-    const {h, f, l, g} = best;
-    const step = noSnap ? 0.5 : (opt.grid || 1);
-    const others = S.items.filter(s => s !== k && s.parent && s.parent.id === h.id && s.parent.f === f && s.parent.l === l).map(s => { const [w, d] = effDims(s); return {x: s.parent.x, z: s.parent.z, w, d}; });
-    const fix = (v, size, max, edges) => {
-      v = clamp(v, 0, Math.max(0, max - size));
-      if (!noSnap) { let b = null; [0, max - size, ...edges].forEach(t => { const dl = t - v; if (Math.abs(dl) <= 3 && (b == null || Math.abs(dl) < Math.abs(b))) b = dl; }); v = b != null ? v + b : Math.round(v / step) * step; }
-      return clamp(v, 0, Math.max(0, max - size));
-    };
-    const ex = [], ez = [];
-    others.forEach(s => { ex.push(s.x + s.w, s.x - ew); ez.push(s.z + s.d, s.z - ed); });
-    k.parent = {id: h.id, f, l, x: r1(fix(best.lx - g.x0 - ew / 2, ew, g.iw, ex)), z: r1(fix(best.lz - g.z0 - ed / 2, ed, g.id, ez)), rot};
+    placeInCell(k, best.h, best.f, best.l, best.lx, best.lz, rot, noSnap);
   } else {
     const p = groundPt(e); if (!p) return;
     if (k.parent) { k.rot = prev ? (prev.rot + prevRot) % 360 : 0; k.parent = null; }

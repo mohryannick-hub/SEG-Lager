@@ -219,6 +219,30 @@ function autoPlace(it) {
   for (let x = 0; x <= g.iw - ew + 0.01; x += 1) { p.x = x; if (!others.some(o => rectsOverlap(o, prect(it)))) return; }
   p.x = 0;
 }
+/* Kiste in Fach setzen. lx/lz = gewünschter Mittelpunkt im Host-Koordinatensystem; lz == null: freie Tiefe automatisch wählen */
+function placeInCell(k, h, f, l, lx, lz, rot, noSnap) {
+  const g = cellGeom(h, f, l), same = k.parent && k.parent.id === h.id && k.parent.f === f && k.parent.l === l;
+  let [ew, ed] = rot === 90 ? [k.d, k.w] : [k.w, k.d];
+  if (lz == null && !same && (ew > g.iw + 0.5 || ed > g.id + 0.5) && ed <= g.iw + 0.5 && ew <= g.id + 0.5) { rot = 90; [ew, ed] = [ed, ew]; }
+  const step = noSnap ? 0.5 : (opt.grid || 1);
+  const others = S.items.filter(s => s !== k && s.parent && s.parent.id === h.id && s.parent.f === f && s.parent.l === l).map(prect);
+  const fix = (v, size, max, edges) => {
+    v = clamp(v, 0, Math.max(0, max - size));
+    if (!noSnap) { let b = null; [0, max - size, ...edges].forEach(t => { const dl = t - v; if (Math.abs(dl) <= 3 && (b == null || Math.abs(dl) < Math.abs(b))) b = dl; }); v = b != null ? v + b : Math.round(v / step) * step; }
+    return clamp(v, 0, Math.max(0, max - size));
+  };
+  const ex = [], ez = [];
+  others.forEach(o => { ex.push(o.x + o.w, o.x - ew); ez.push(o.z + o.d, o.z - ed); });
+  const x = r1(fix(lx - g.x0 - ew / 2, ew, g.iw, ex));
+  let z;
+  if (lz != null) z = r1(fix(lz - g.z0 - ed / 2, ed, g.id, ez));
+  else {
+    const cand = [...(same ? [k.parent.z] : []), (g.id - ed) / 2, 0, g.id - ed].map(v => clamp(r1(v), 0, Math.max(0, g.id - ed)));
+    z = cand.find(zz => !others.some(o => rectsOverlap(o, {x, z: zz, w: ew, d: ed})));
+    if (z == null) z = cand[0];
+  }
+  k.parent = {id: h.id, f, l, x, z, rot};
+}
 function cellLabel(h, f, l) { return `${h.name} · ${h.fields > 1 ? 'Feld ' + (f + 1) + ' · ' : ''}Ebene ${l + 1}`; }
 
 /* ---------- Analyse ---------- */
@@ -329,6 +353,7 @@ const ICONS = {
   lock: IC('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
   unlock: IC('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>'),
   solo: IC('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>'),
+  shelf: IC('<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18M3 15h18"/>'),
   plus: IC('<path d="M12 5v14M5 12h14"/>'),
   x: IC('<path d="M6 6l12 12M18 6L6 18"/>'),
 };
@@ -499,6 +524,7 @@ function renderObjList() {
     h += `<div class="gh ${g.hidden ? 'off' : ''}"><button class="ib" data-act="gvis" data-g="${g.id}" title="${g.hidden ? 'Gruppe einblenden' : 'Gruppe ausblenden'}">${g.hidden ? ICONS.eyeoff : ICONS.eye}</button>
       <input type="text" data-b="${id}" title="Gruppenname">
       <button class="ib ${solo && solo.type === 'group' && solo.id === g.id ? 'on' : ''}" data-act="gsolo" data-g="${g.id}" title="Nur diese Gruppe anzeigen">${ICONS.solo}</button>
+      <button class="ib" data-act="gshelf" data-g="${g.id}" title="Gruppe in der Regalansicht öffnen">${ICONS.shelf}</button>
       <button class="ib" data-act="gadd" data-g="${g.id}" title="Gewähltes Objekt zur Gruppe hinzufügen">${ICONS.plus}</button>
       <button class="ib" data-act="gdel" data-g="${g.id}" title="Gruppe auflösen">${ICONS.x}</button></div>
       <div class="gsum">${mem.length} Objekt${mem.length === 1 ? '' : 'e'} · ${fmt(kg)} kg</div><div class="list" style="margin-top:4px">${mem.map(block).join('') || '<div class="muted" style="font-size:12px">Leer – Objekt wählen und „+“ klicken.</div>'}</div>`;
@@ -630,7 +656,7 @@ function buildInspector() {
     OUT.r = () => fmt(S.room.w - bboxOf(it).maxX) + ' cm';
     OUT.b = () => fmt(S.room.l - bboxOf(it).maxY) + ' cm';
   }
-  defs.push({html: `<div class="btns"><button data-act="rot" ${lk ? 'disabled' : ''}>⟳ 90° drehen</button>${placed ? '' : '<button data-act="isolo">Nur dieses anzeigen</button>'}</div>`},
+  defs.push({html: `<div class="btns"><button data-act="rot" ${lk ? 'disabled' : ''}>⟳ 90° drehen</button>${placed ? '' : '<button data-act="isolo">Nur dieses anzeigen</button>'}${(HOST_TYPES.includes(it.type) || placed) ? '<button data-act="shelf">Regalansicht</button>' : ''}</div>`},
     {h3: 'Maße'},
     num('Breite', () => it.w, v => { it.w = v; }, {unit: 'cm', min: 5, step: 5}),
     num('Tiefe', () => it.d, v => { it.d = v; }, {unit: 'cm', min: 5, step: 5}),
@@ -884,6 +910,8 @@ document.addEventListener('click', e => {
     if (k === 'del') delSel(); else if (k === 'dup') dupSel(); else if (k === 'rot') rotSel();
     else if (k === 'ivis' && it) { it.hidden = !it.hidden; done(); }
     else if (k === 'ilock' && it) { it.locked = !it.locked; done(); }
+    else if (k === 'shelf') { const o = findSel(); if (o && sel.kind === 'item') { const t = topOf(o); if (t && HOST_TYPES.includes(t.type)) openShelf({type: 'item', id: t.id}); } }
+    else if (k === 'gshelf' && g) openShelf({type: 'group', id: g.id});
     else if (k === 'isolo') { const o = findSel(); if (o && sel.kind === 'item') setSolo({type: 'item', id: topOf(o).id}); }
     else if (k === 'gnew') {
       const ng = {id: uid(), name: nextGroupName(), hidden: false}; S.groups.push(ng);
@@ -987,6 +1015,7 @@ function refresh(o) {
   ST = analyze();
   if (mode === '2d') renderPlan();
   renderObjList(); renderReport(); renderStatus(); renderPillarList(); renderSolo();
+  if (window.shelfOpen) renderShelf();
   if (o.rebuild) { buildInspector(); buildRoomTab(); }
   syncForms();
   if (mode === '3d' && window.render3D) render3D();
