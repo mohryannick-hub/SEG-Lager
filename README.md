@@ -8,6 +8,9 @@ Statische Web-App (kein Build nötig): `index.html` im Browser öffnen. three.js
 - Pro Objekt: Position, Drehung, Maße, Felder × Ebenen, Fachlast, Feldlast, Eigengewicht
 - **Inhalt für jedes Objekt/Fach**: Bezeichnung, Menge, Gewicht je Stück (Summe wird berechnet); eingestellte Kisten zählen zur Fach-/Feldlast des Wirts
 - Prüfung: Fach-/Feldlast, Bodenbelastung, Kollisionen, passt die Kiste ins Fach, blockierte Türen/Freiräume
+- **Fixieren**: gesperrte Objekte (Schloss-Symbol) lassen sich weder ziehen noch drehen noch löschen; Inhalt bleibt editierbar
+- **Gruppen** für Regale/Schränke, Ein-/Ausblenden einzelner Objekte oder Gruppen, „Nur diese anzeigen“ (Gruppe oder Objekt)
+- **Dunkelmodus** (folgt dem System, per Knopf umschaltbar)
 - Autosave (localStorage), Undo/Redo, JSON-Export/-Import, Druckansicht mit Packliste
 
 Die Raummaße im Beispielplan (900 × 600 cm) sind Platzhalter.

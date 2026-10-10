@@ -49,7 +49,7 @@ function makeCells(it) {
 function newItem(type, over) {
   const T = TYPES[type];
   const it = Object.assign({id: uid(), type, name: T.label, x: 100, y: 100, w: T.w, d: T.d, h: T.h, rot: 0, color: T.color,
-    fields: T.fields, levels: T.levels, maxFach: T.maxFach, maxFeld: T.maxFeld, empty: T.empty, doors: T.doors, clearance: T.clearance, parent: null}, over || {});
+    fields: T.fields, levels: T.levels, maxFach: T.maxFach, maxFeld: T.maxFeld, empty: T.empty, doors: T.doors, clearance: T.clearance, parent: null, group: null, hidden: false, locked: false}, over || {});
   makeCells(it);
   return it;
 }
@@ -58,12 +58,13 @@ function defaultState() {
     room: {w: 900, l: 600, h: 280, floorLimit: 500},
     door: {wall: 'S', offset: 160, width: 100, slide: 'start', clear: 80},
     pillars: [{id: uid(), x: 300, y: 250, w: 40, d: 40}, {id: uid(), x: 600, y: 250, w: 40, d: 40}],
-    items: [],
+    items: [], groups: [],
   };
+  const gid = uid(); s.groups.push({id: gid, name: 'Schränke Nord', hidden: false});
   const A = (t, o) => { const it = newItem(t, o); s.items.push(it); return it; };
-  const s1 = A('schrank', {name: 'Schrank 1', x: 50, y: 25});
-  A('schrank', {name: 'Schrank 2', x: 150, y: 25});
-  A('schrank', {name: 'Schrank 3', x: 250, y: 25});
+  const s1 = A('schrank', {name: 'Schrank 1', x: 50, y: 25, group: gid});
+  A('schrank', {name: 'Schrank 2', x: 150, y: 25, group: gid});
+  A('schrank', {name: 'Schrank 3', x: 250, y: 25, group: gid});
   A('rollwagen', {name: 'Rollwagen 1', x: 400, y: 25});
   A('rollwagen', {name: 'Rollwagen 2', x: 490, y: 25});
   const reg = A('regal', {name: 'Regal W', x: 30, y: 300, rot: 270});
@@ -88,7 +89,10 @@ function normalizeState(s) {
   delete s.door.hinge;
   s.pillars = s.pillars || [];
   s.items = s.items || [];
-  s.items.forEach(i => { i.id = i.id || uid(); i.parent = i.parent || null; if (i.type === 'kiste' || i.type === 'tisch') { i.fields = 1; i.levels = 1; } makeCells(i); });
+  s.groups = s.groups || [];
+  const gids = new Set(s.groups.map(g => g.id));
+  s.door.locked = !!s.door.locked; s.pillars.forEach(p => { p.locked = !!p.locked; });
+  s.items.forEach(i => { i.id = i.id || uid(); i.parent = i.parent || null; i.hidden = !!i.hidden; i.locked = !!i.locked; i.group = gids.has(i.group) ? i.group : null; if (i.type === 'kiste' || i.type === 'tisch') { i.fields = 1; i.levels = 1; } makeCells(i); });
   return s;
 }
 function loadState() {
@@ -99,6 +103,7 @@ let S = loadState() || defaultState();
 let sel = null;           // {kind:'item'|'pillar'|'door', id}
 let selCell = null;       // {id, f, l} – aufgeklapptes Fach im Inspektor
 let mode = '2d';
+let solo = null;          // {type:'group'|'item', id} – nur diese anzeigen (nicht gespeichert)
 let view = {x: -60, y: -60, w: 1020, h: 720};
 const opt = {grid: 5, zones: true, dims: true, heat: false};
 const openCells = new Set();
@@ -310,6 +315,24 @@ function findSel() {
 }
 function ratioClass(r) { return r > 1 ? 'err' : r > 0.85 ? 'warn' : ''; }
 const topOf = it => it.parent ? findItem(it.parent.id) : it;
+const grpOf = id => S.groups.find(g => g.id === id);
+function isHidden(it) {
+  const t = topOf(it) || it;
+  if (solo) return solo.type === 'group' ? t.group !== solo.id : t.id !== solo.id;
+  return !!(t.hidden || (t.group && grpOf(t.group) && grpOf(t.group).hidden));
+}
+function isLocked(o, kind) { return kind === 'door' ? !!S.door.locked : !!(o && o.locked); }
+const IC = (p, w) => `<svg viewBox="0 0 24 24" width="${w || 16}" height="${w || 16}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const ICONS = {
+  eye: IC('<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'),
+  eyeoff: IC('<path d="M17.94 17.94A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 5c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19M1 1l22 22"/>'),
+  lock: IC('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
+  unlock: IC('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>'),
+  solo: IC('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>'),
+  plus: IC('<path d="M12 5v14M5 12h14"/>'),
+  x: IC('<path d="M6 6l12 12M18 6L6 18"/>'),
+};
+function nextGroupName() { let n = 1; const names = new Set(S.groups.map(g => g.name)); while (names.has('Gruppe ' + n)) n++; return 'Gruppe ' + n; }
 
 /* ---------- Formular-Framework ---------- */
 const B = {}; let bn = 0;
@@ -322,13 +345,16 @@ function formHTML(defs) {
     if (d.type === 'select') inp = `<select data-b="${id}">${d.options.map(o => `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join('')}</select>`;
     else if (d.type === 'text') inp = `<input type="text" data-b="${id}">`;
     else if (d.type === 'color') inp = `<input type="color" data-b="${id}">`;
+    else if (d.type === 'check') inp = `<input type="checkbox" data-b="${id}">`;
     else inp = `<input type="number" data-b="${id}" ${d.min != null ? `min="${d.min}"` : ''} ${d.max != null ? `max="${d.max}"` : ''} step="${d.step || 1}">`;
+    if (d.disabled) inp = inp.replace('data-b=', 'disabled data-b=');
     return `<div class="row"><label>${esc(d.label)}${d.unit ? ` <span class="u">(${d.unit})</span>` : ''}</label>${inp}</div>`;
   }).join('');
 }
 function syncForms() {
   document.querySelectorAll('[data-b]').forEach(el => {
     const d = B[el.dataset.b]; if (!d) return;
+    if (d.type === 'check') { el.checked = !!d.get(); return; }
     if (document.activeElement !== el) { const v = d.get(); if (el.value !== String(v)) el.value = v; }
   });
   document.querySelectorAll('[data-o]').forEach(el => { const f = OUT[el.dataset.o]; if (f) el.innerHTML = f(); });
@@ -342,7 +368,8 @@ document.addEventListener('change', e => {
   const el = e.target.closest('[data-b]'); if (!el) return;
   const d = B[el.dataset.b]; if (!d) return;
   let v = el.value;
-  if (d.type === 'number' || !d.type) {
+  if (d.type === 'check') v = el.checked;
+  else if (d.type === 'number' || !d.type) {
     if (v === '' && d.nullable) v = null;
     else {
       v = parseFloat(v);
@@ -374,12 +401,13 @@ function nextName(base) {
 }
 function dupSel() {
   if (!sel || sel.kind !== 'item') return;
-  const src = findItem(sel.id), c = clone(src); c.id = uid(); c.name += ' (Kopie)';
+  const src = findItem(sel.id), c = clone(src); c.id = uid(); c.name += ' (Kopie)'; c.locked = false;
   if (c.parent) { S.items.push(c); autoPlace(c); } else { c.x += 20; c.y += 20; S.items.push(c); }
   sel = {kind: 'item', id: c.id}; commit(); refresh({rebuild: true});
 }
 function delSel() {
   if (!sel) return;
+  const cur = findSel(); if (cur && isLocked(cur, sel.kind)) return;
   if (sel.kind === 'item') {
     const h = findItem(sel.id);
     S.items.filter(k => k.parent && k.parent.id === sel.id).forEach(k => unplace(k, h));
@@ -393,7 +421,7 @@ function addPillar() {
   S.pillars.push(p); sel = {kind: 'pillar', id: p.id}; commit(); refresh({rebuild: true, room: true});
 }
 function rotSel() {
-  const o = findSel(); if (!o || sel.kind !== 'item') return;
+  const o = findSel(); if (!o || sel.kind !== 'item' || o.locked) return;
   if (o.parent) { o.parent.rot = o.parent.rot === 90 ? 0 : 90; autoFit(o); } else o.rot = (o.rot + 90) % 360;
   commit(); refresh({});
 }
@@ -411,9 +439,11 @@ function setLocation(it, v) {
 /* ---------- Raum-Tab ---------- */
 const num = (label, get, set, x) => Object.assign({label, type: 'number', get, set}, x);
 function doorDefs() {
+  const lk = !!S.door.locked;
   return [
-    {label: 'Wand', type: 'select', options: Object.entries(WALLS), get: () => S.door.wall, set: v => { S.door.wall = v; }},
-    num('Abstand vom Wandanfang', () => S.door.offset, v => { S.door.offset = v; }, {unit: 'cm', min: 0, step: 5}),
+    {label: 'Tür fixiert', type: 'check', get: () => !!S.door.locked, set: v => { S.door.locked = v; }, rebuild: true},
+    {label: 'Wand', type: 'select', disabled: lk, options: Object.entries(WALLS), get: () => S.door.wall, set: v => { S.door.wall = v; }},
+    num('Abstand vom Wandanfang', () => S.door.offset, v => { S.door.offset = v; }, {unit: 'cm', min: 0, step: 5, disabled: lk}),
     num('Breite der Öffnung', () => S.door.width, v => { S.door.width = v; }, {unit: 'cm', min: 50, step: 5}),
     {label: 'Flügel schiebt sich', type: 'select', options: [['start', 'zum Wandanfang'], ['end', 'zum Wandende']], get: () => S.door.slide, set: v => { S.door.slide = v; }},
     num('Durchgang freihalten', () => S.door.clear, v => { S.door.clear = v; }, {unit: 'cm', min: 0, step: 10}),
@@ -444,25 +474,48 @@ function renderPillarList() {
 function buildObjectsTab() {
   $('#tab-objects').innerHTML = `<h3>Hinzufügen</h3><div class="pal">${Object.entries(TYPES).map(([k, t]) =>
     `<button data-add="${k}"><span class="sw" style="background:${t.color}"></span><span>${esc(t.label)}</span></button>`).join('')}</div>
-    <h3>Im Raum</h3><div class="list" id="objList"></div>`;
+    <h3>Im Raum</h3><div class="btns"><button class="small" data-act="gnew">+ Gruppe</button><button class="small" data-act="showall">Alle anzeigen</button></div>
+    <div id="objList"></div>`;
 }
+let objIds = [];
+function groupItems(g) { return S.items.filter(i => !i.parent && i.group === g.id); }
 function renderObjList() {
   const el = $('#objList'); if (!el) return;
+  objIds.forEach(id => delete B[id]); objIds = [];
   const row = (it, sub) => {
-    const st = ST.items[it.id], bad = ST.bad.has(it.id);
+    const st = ST.items[it.id], bad = ST.bad.has(it.id), off = isHidden(it);
     const cls = st.over || bad ? 'err' : (st.frontBlocked ? 'warn' : '');
     const where = sub ? `<small>${esc(cellLabel(findItem(it.parent.id), it.parent.f, it.parent.l).split(' · ').slice(1).join(' · '))}</small>` : '';
-    return `<div class="li ${sel && sel.id === it.id ? 'sel' : ''}" style="${sub ? 'margin-left:16px' : ''}" data-sel="item:${it.id}"><span class="sw" style="background:${it.color}"></span>
-      <span class="nm">${esc(it.name)}</span>${where}<span class="chip ${cls}">${fmt(st.content)} kg</span></div>`;
+    return `<div class="li ${sel && sel.id === it.id ? 'sel' : ''} ${off ? 'off' : ''}" style="${sub ? 'margin-left:16px' : ''}" data-sel="item:${it.id}"><span class="sw" style="background:${it.color}"></span>
+      <span class="nm">${esc(it.name)}</span>${where}<span class="chip ${cls}">${fmt(st.content)} kg</span>
+      ${sub ? '' : `<button class="ib" data-act="ivis" data-id="${it.id}" title="${it.hidden ? 'Einblenden' : 'Ausblenden'}">${it.hidden ? ICONS.eyeoff : ICONS.eye}</button>`}
+      <button class="ib ${it.locked ? 'on' : ''}" data-act="ilock" data-id="${it.id}" title="${it.locked ? 'Fixierung lösen' : 'Position fixieren'}">${it.locked ? ICONS.lock : ICONS.unlock}</button></div>`;
   };
-  el.innerHTML = S.items.filter(i => !i.parent).map(it => row(it, false) + ST.items[it.id].kids.map(k => row(k, true)).join('')).join('') || '<div class="muted">Noch keine Objekte.</div>';
+  const block = it => row(it, false) + ST.items[it.id].kids.map(k => row(k, true)).join('');
+  let h = '';
+  S.groups.forEach(g => {
+    const mem = groupItems(g), kg = mem.reduce((s, i) => s + ST.items[i.id].total, 0), id = 'b' + (++bn);
+    B[id] = {type: 'text', get: () => g.name, set: v => { g.name = v || g.name; }}; objIds.push(id);
+    h += `<div class="gh ${g.hidden ? 'off' : ''}"><button class="ib" data-act="gvis" data-g="${g.id}" title="${g.hidden ? 'Gruppe einblenden' : 'Gruppe ausblenden'}">${g.hidden ? ICONS.eyeoff : ICONS.eye}</button>
+      <input type="text" data-b="${id}" title="Gruppenname">
+      <button class="ib ${solo && solo.type === 'group' && solo.id === g.id ? 'on' : ''}" data-act="gsolo" data-g="${g.id}" title="Nur diese Gruppe anzeigen">${ICONS.solo}</button>
+      <button class="ib" data-act="gadd" data-g="${g.id}" title="Gewähltes Objekt zur Gruppe hinzufügen">${ICONS.plus}</button>
+      <button class="ib" data-act="gdel" data-g="${g.id}" title="Gruppe auflösen">${ICONS.x}</button></div>
+      <div class="gsum">${mem.length} Objekt${mem.length === 1 ? '' : 'e'} · ${fmt(kg)} kg</div><div class="list" style="margin-top:4px">${mem.map(block).join('') || '<div class="muted" style="font-size:12px">Leer – Objekt wählen und „+“ klicken.</div>'}</div>`;
+  });
+  const free = S.items.filter(i => !i.parent && !i.group);
+  if (S.groups.length && free.length) h += `<div class="gh"><b style="padding:3px 4px">Ohne Gruppe</b></div>`;
+  h += `<div class="list" style="margin-top:4px">${free.map(block).join('') || (S.groups.length ? '' : '<div class="muted">Noch keine Objekte.</div>')}</div>`;
+  el.innerHTML = h;
 }
 
 /* ---------- Übersicht ---------- */
 function contentRows(it, f, l) { return it.cells[f][l].c.filter(r => r.n || +r.kg || +r.q); }
 function reportHTML() {
   const T = ST.totals;
-  let h = `<div class="kv"><span>Raumfläche</span><b>${fmt(T.rArea / 1e4)} m²</b><span>Belegte Stellfläche</span><b>${fmt(T.area / 1e4)} m² (${Math.round((1 - T.free) * 100)} %)</b><span>Lagergut gesamt</span><b>${fmt(T.content)} kg</b><span>Gesamtgewicht inkl. Möbel</span><b>${fmt(T.total)} kg</b></div>`;
+  let h = '';
+  if (S.groups.length) h += '<div class="kv">' + S.groups.map(g => { const m = groupItems(g); return `<span>${esc(g.name)} (${m.length})</span><b>${fmt(m.reduce((a, i) => a + ST.items[i.id].total, 0))} kg</b>`; }).join('') + '</div>';
+  h += `<div class="kv"><span>Raumfläche</span><b>${fmt(T.rArea / 1e4)} m²</b><span>Belegte Stellfläche</span><b>${fmt(T.area / 1e4)} m² (${Math.round((1 - T.free) * 100)} %)</b><span>Lagergut gesamt</span><b>${fmt(T.content)} kg</b><span>Gesamtgewicht inkl. Möbel</span><b>${fmt(T.total)} kg</b></div>`;
   S.items.forEach(it => {
     const st = ST.items[it.id], rows = [];
     it.cells.forEach((col, f) => col.forEach((c, l) => {
@@ -535,43 +588,49 @@ function buildInspector() {
   }
   if (sel.kind === 'pillar') {
     el.innerHTML = `<div class="pad">${formHTML([{h3: 'Stützpfeiler'},
-      num('Abstand links', () => o.x, v => { o.x = v; }, {unit: 'cm', step: 5}),
-      num('Abstand oben', () => o.y, v => { o.y = v; }, {unit: 'cm', step: 5}),
+      {label: 'Position fixiert', type: 'check', get: () => !!o.locked, set: v => { o.locked = v; }, rebuild: true},
+      num('Abstand links', () => o.x, v => { o.x = v; }, {unit: 'cm', step: 5, disabled: !!o.locked}),
+      num('Abstand oben', () => o.y, v => { o.y = v; }, {unit: 'cm', step: 5, disabled: !!o.locked}),
       num('Breite', () => o.w, v => { o.w = v; }, {unit: 'cm', min: 5, step: 5}),
       num('Tiefe', () => o.d, v => { o.d = v; }, {unit: 'cm', min: 5, step: 5}),
-    ])}<div class="btns"><button class="danger" data-act="del">Löschen</button></div></div>`;
+    ])}<div class="btns"><button class="danger" data-act="del" ${o.locked ? 'disabled' : ''}>Löschen</button></div></div>`;
     syncForms(); return;
   }
-  const it = o, T = TYPES[it.type], placed = !!it.parent;
+  const it = o, T = TYPES[it.type], placed = !!it.parent, lk = !!it.locked;
   const setEdge = (axis, v) => { const bb = bboxOf(it); if (axis === 'x') it.x += v - bb.minX; else it.y += v - bb.minY; };
   const defs = [
     {h3: T.label},
     {label: 'Bezeichnung', type: 'text', get: () => it.name, set: v => { it.name = v; }},
     {label: 'Farbe', type: 'color', get: () => it.color, set: v => { it.color = v; }},
+    {label: 'Position fixiert', type: 'check', get: () => it.locked, set: v => { it.locked = v; }, rebuild: true},
   ];
+  if (!placed) {
+    defs.push({label: 'Gruppe', type: 'select', options: [['', 'Keine'], ...S.groups.map(g => [g.id, g.name])], get: () => it.group || '', set: v => { it.group = v || null; }},
+      {label: 'Im Plan anzeigen', type: 'check', get: () => !it.hidden, set: v => { it.hidden = !v; }});
+  }
   if (it.type === 'kiste') {
     defs.push({h3: 'Standort'},
-      {label: 'Standort', type: 'select', options: locOptions(), rebuild: true,
+      {label: 'Standort', type: 'select', options: locOptions(), rebuild: true, disabled: lk,
         get: () => placed ? `${it.parent.id}|${it.parent.f}|${it.parent.l}` : 'floor', set: v => setLocation(it, v)});
   }
   if (placed) {
     const g = () => { const h = findItem(it.parent.id); return cellGeom(h, it.parent.f, it.parent.l); };
     defs.push(
-      num('Abstand von links im Fach', () => r1(it.parent.x), v => { it.parent.x = v; }, {unit: 'cm', step: 1}),
-      num('Abstand von hinten im Fach', () => r1(it.parent.z), v => { it.parent.z = v; }, {unit: 'cm', step: 1}),
-      {label: 'Ausrichtung', type: 'select', options: [[0, 'längs (Breite = links–rechts)'], [90, 'quer gedreht']], get: () => it.parent.rot, set: v => { it.parent.rot = +v; autoFit(it); }, rebuild: true},
+      num('Abstand von links im Fach', () => r1(it.parent.x), v => { it.parent.x = v; }, {unit: 'cm', step: 1, disabled: lk}),
+      num('Abstand von hinten im Fach', () => r1(it.parent.z), v => { it.parent.z = v; }, {unit: 'cm', step: 1, disabled: lk}),
+      {label: 'Ausrichtung', type: 'select', disabled: lk, options: [[0, 'längs (Breite = links–rechts)'], [90, 'quer gedreht']], get: () => it.parent.rot, set: v => { it.parent.rot = +v; autoFit(it); }, rebuild: true},
       {html: `<div class="muted" style="font-size:12px">Nutzraum im Fach: <b data-o="cg"></b></div>`});
     OUT.cg = () => { const q = g(); return `${fmt(q.iw)} × ${fmt(q.id)} × ${q.ch > 900 ? '∞' : fmt(q.ch)} cm`; };
   } else {
     defs.push({h3: 'Position'},
-      num('Abstand zur linken Wand', () => r1(bboxOf(it).minX), v => setEdge('x', v), {unit: 'cm', step: 1}),
-      num('Abstand zur oberen Wand', () => r1(bboxOf(it).minY), v => setEdge('y', v), {unit: 'cm', step: 1}),
-      num('Drehung', () => it.rot, v => { it.rot = ((v % 360) + 360) % 360; }, {unit: '°', step: 15}),
+      num('Abstand zur linken Wand', () => r1(bboxOf(it).minX), v => setEdge('x', v), {unit: 'cm', step: 1, disabled: lk}),
+      num('Abstand zur oberen Wand', () => r1(bboxOf(it).minY), v => setEdge('y', v), {unit: 'cm', step: 1, disabled: lk}),
+      num('Drehung', () => it.rot, v => { it.rot = ((v % 360) + 360) % 360; }, {unit: '°', step: 15, disabled: lk}),
       {html: `<div class="muted" style="font-size:12px">Abstand rechts <b data-o="r"></b> · unten <b data-o="b"></b> (Front = dicke Kante)</div>`});
     OUT.r = () => fmt(S.room.w - bboxOf(it).maxX) + ' cm';
     OUT.b = () => fmt(S.room.l - bboxOf(it).maxY) + ' cm';
   }
-  defs.push({html: `<div class="btns"><button data-act="rot">⟳ 90° drehen</button></div>`},
+  defs.push({html: `<div class="btns"><button data-act="rot" ${lk ? 'disabled' : ''}>⟳ 90° drehen</button>${placed ? '' : '<button data-act="isolo">Nur dieses anzeigen</button>'}</div>`},
     {h3: 'Maße'},
     num('Breite', () => it.w, v => { it.w = v; }, {unit: 'cm', min: 5, step: 5}),
     num('Tiefe', () => it.d, v => { it.d = v; }, {unit: 'cm', min: 5, step: 5}),
@@ -600,7 +659,7 @@ function buildInspector() {
   cells += `</div><div id="fsums" data-o="fsums"></div>`;
   OUT.fsums = () => ST.items[it.id].fieldSum.length > 1 ? ST.items[it.id].fieldSum.map((s, f) => `<div class="fieldsum">Feld ${f + 1}: <b class="${s > it.maxFeld ? 'chip err' : ''}">${fmt(s)} / ${fmt(it.maxFeld)} kg</b> Feldlast</div>`).join('') : '';
   defs.push({html: cells});
-  el.innerHTML = `<div class="pad">${formHTML(defs)}<div class="btns"><button data-act="dup">Duplizieren</button><button class="danger" data-act="del">Löschen</button></div></div>`;
+  el.innerHTML = `<div class="pad">${formHTML(defs)}<div class="btns"><button data-act="dup">Duplizieren</button><button class="danger" data-act="del" ${lk ? 'disabled' : ''}>Löschen</button></div></div>`;
   syncForms();
 }
 
@@ -633,7 +692,9 @@ function itemSVG(it) {
   } else if (it.type === 'tisch') {
     [[-hw + 4, -hd + 4], [hw - 4, -hd + 4], [-hw + 4, hd - 4], [hw - 4, hd - 4]].forEach(p => g += `<rect x="${p[0] - 3}" y="${p[1] - 3}" width="6" height="6" fill="#555"/>`);
   }
-  g += `<line class="front" x1="${-hw}" y1="${hd}" x2="${hw}" y2="${hd}"/></g>`;
+  g += `<line class="front" x1="${-hw}" y1="${hd}" x2="${hw}" y2="${hd}"/>`;
+  if (it.locked) g += `<g transform="translate(${-hw + 3} ${-hd + 3})"><rect y="4" width="8" height="6" rx="1" fill="#222"/><path d="M1.6 4V2.6a2.4 2.4 0 0 1 4.8 0V4" fill="none" stroke="#222" stroke-width="1.1"/></g>`;
+  g += '</g>';
   // Beschriftung: läuft entlang der Breite, bleibt aber lesbar (nie auf dem Kopf)
   let r = ((it.rot % 180) + 180) % 180; if (r > 90) r -= 180;
   const fs = Math.max(4.5, Math.min(11, (w * 0.92) / (Math.max(it.name.length, 8) * 0.55)));
@@ -648,7 +709,7 @@ function zonesSVG() {
   if (!opt.zones) return z;
   const dg = doorGeom();
   z += `<polygon class="zone ${ST.issues.some(i => i.msg.endsWith('Durchgang an der Tür')) ? 'bad' : ''}" points="${polyPts(dg.zone)}"/>`;
-  S.items.filter(i => !i.parent).forEach(it => {
+  S.items.filter(i => !i.parent && !isHidden(i)).forEach(it => {
     const fz = frontZone(it); if (!fz) return;
     const blocked = ST.items[it.id].frontBlocked;
     if (it.type === 'schrank') z += `<path class="zone ${blocked ? 'bad' : ''}" transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${it.rot})" d="${arcPath(it)}"/>`;
@@ -656,8 +717,17 @@ function zonesSVG() {
   });
   return z;
 }
+function groupsSVG() {
+  let s = '';
+  S.groups.forEach(g => {
+    const mem = groupItems(g).filter(i => !isHidden(i)); if (!mem.length) return;
+    const bs = mem.map(bboxOf), x0 = Math.min(...bs.map(b => b.minX)) - 6, y0 = Math.min(...bs.map(b => b.minY)) - 6, x1 = Math.max(...bs.map(b => b.maxX)) + 6, y1 = Math.max(...bs.map(b => b.maxY)) + 6;
+    s += `<rect class="grp" x="${r1(x0)}" y="${r1(y0)}" width="${r1(x1 - x0)}" height="${r1(y1 - y0)}" rx="6"/><text class="grpt" x="${r1(x0 + 4)}" y="${r1(y0 - 4)}">${esc(g.name)}</text>`;
+  });
+  return s;
+}
 function selBB() {
-  const o = findSel(); if (!o || sel.kind === 'door') return null;
+  const o = findSel(); if (!o || sel.kind === 'door' || (sel.kind === 'item' && isHidden(o))) return null;
   if (sel.kind === 'item') return bboxOf(o.parent ? topOf(o) : o);
   return bbox(pillarPoly(o));
 }
@@ -675,9 +745,10 @@ function renderPlan() {
   let h = `<defs><pattern id="g10" width="10" height="10" patternUnits="userSpaceOnUse"><path class="g-minor" d="M10 0H0V10"/></pattern>
     <pattern id="g100" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#g10)"/><path class="g-major" d="M100 0H0V100"/></pattern></defs>`;
   h += `<rect class="floor" x="0" y="0" width="${R.w}" height="${R.l}"/><rect x="0" y="0" width="${R.w}" height="${R.l}" fill="url(#g100)" pointer-events="none"/>`;
+  h += groupsSVG();
   h += zonesSVG();
   S.pillars.forEach(p => h += `<rect class="pillar" data-kind="pillar" data-id="${p.id}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.d}"/>`);
-  S.items.filter(i => !i.parent).forEach(it => h += itemSVG(it));
+  S.items.filter(i => !i.parent && !isHidden(i)).forEach(it => h += itemSVG(it));
   h += `<rect class="wall" x="-6" y="-6" width="${R.w + 12}" height="${R.l + 12}"/>`;
   h += `<line class="doorgap" x1="${dg.A[0]}" y1="${dg.A[1]}" x2="${dg.B[0]}" y2="${dg.B[1]}"/>`;
   h += `<line class="doorclosed" x1="${dg.A[0]}" y1="${dg.A[1]}" x2="${dg.B[0]}" y2="${dg.B[1]}"/>`;
@@ -720,7 +791,8 @@ svg.addEventListener('pointerdown', e => {
     const changedSel = !sel || sel.kind !== kind || sel.id !== id;
     sel = {kind, id}; if (changedSel) selCell = null;
     const o = findSel();
-    drag = {mode: 'move', kind, id, p0: p, o0: kind === 'door' ? null : [o.x, o.y], moved: false};
+    if (isLocked(o, kind)) drag = {mode: 'pan', px: e.clientX, py: e.clientY, v0: {...view}, a: svg.getScreenCTM().a, moved: false};
+    else drag = {mode: 'move', kind, id, p0: p, o0: kind === 'door' ? null : [o.x, o.y], moved: false};
     if (changedSel) refresh({rebuild: true});
   } else {
     drag = {mode: 'pan', px: e.clientX, py: e.clientY, v0: {...view}, a: svg.getScreenCTM().a, moved: false};
@@ -803,24 +875,48 @@ function setMode(m) {
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 
 /* Klicks auf Listen/Tabs/Inspector */
+function setSolo(v) { solo = v; refresh({rebuild: true}); }
 document.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]');
+  if (act) {
+    const k = act.dataset.act, g = act.dataset.g && grpOf(act.dataset.g), it = act.dataset.id && findItem(act.dataset.id);
+    const done = () => { commit(); refresh({rebuild: true}); };
+    if (k === 'del') delSel(); else if (k === 'dup') dupSel(); else if (k === 'rot') rotSel();
+    else if (k === 'ivis' && it) { it.hidden = !it.hidden; done(); }
+    else if (k === 'ilock' && it) { it.locked = !it.locked; done(); }
+    else if (k === 'isolo') { const o = findSel(); if (o && sel.kind === 'item') setSolo({type: 'item', id: topOf(o).id}); }
+    else if (k === 'gnew') {
+      const ng = {id: uid(), name: nextGroupName(), hidden: false}; S.groups.push(ng);
+      const o = findSel(); if (o && sel.kind === 'item' && !o.parent) o.group = ng.id;
+      done();
+    }
+    else if (k === 'gvis' && g) { g.hidden = !g.hidden; done(); }
+    else if (k === 'gsolo' && g) setSolo(solo && solo.type === 'group' && solo.id === g.id ? null : {type: 'group', id: g.id});
+    else if (k === 'gadd' && g) { const o = findSel(); if (o && sel.kind === 'item' && !o.parent) { o.group = g.id; done(); } }
+    else if (k === 'gdel' && g) { S.items.forEach(i => { if (i.group === g.id) i.group = null; }); S.groups = S.groups.filter(x => x !== g); if (solo && solo.id === g.id) solo = null; done(); }
+    else if (k === 'showall') { solo = null; S.items.forEach(i => { i.hidden = false; }); S.groups.forEach(x => { x.hidden = false; }); done(); }
+    else if (k === 'addc' || k === 'delc') {
+      const parts = act.dataset.c.split(':'), ci = findItem(parts[0]); if (!ci) return;
+      const f = +parts[1], l = +parts[2], c = ci.cells[f][l];
+      if (k === 'addc') c.c.push({n: '', q: 1, kg: 0}); else c.c.splice(+parts[3], 1);
+      openCells.add(`${ci.id}:${f}:${l}`); commit(); refresh({rebuild: true});
+    }
+    return;
+  }
   const s = e.target.closest('[data-sel]');
   if (s) { const [k, id] = s.dataset.sel.split(':'); select({kind: k, id}); return; }
   const a = e.target.closest('[data-add]'); if (a) { addItem(a.dataset.add); return; }
   const t = e.target.closest('#tabs button'); if (t) { showTab(t.dataset.tab); return; }
-  const g = e.target.closest('[data-go]'); if (g) { showTab(g.dataset.go); return; }
-  const act = e.target.closest('[data-act]');
-  if (act) {
-    const k = act.dataset.act;
-    if (k === 'del') delSel(); else if (k === 'dup') dupSel(); else if (k === 'rot') rotSel();
-    else if (k === 'addc' || k === 'delc') {
-      const parts = act.dataset.c.split(':'), it = findItem(parts[0]); if (!it) return;
-      const f = +parts[1], l = +parts[2], c = it.cells[f][l];
-      if (k === 'addc') c.c.push({n: '', q: 1, kg: 0}); else c.c.splice(+parts[3], 1);
-      openCells.add(`${it.id}:${f}:${l}`); commit(); refresh({rebuild: true});
-    }
-  }
+  const gg = e.target.closest('[data-go]'); if (gg) { showTab(gg.dataset.go); return; }
 });
+function renderSolo() {
+  const el = $('#soloBar'); if (!el) return;
+  el.hidden = !solo;
+  if (solo) {
+    const n = solo.type === 'group' ? (grpOf(solo.id) || {}).name : (findItem(solo.id) || {}).name;
+    el.innerHTML = `Nur angezeigt: <b>${esc(n || '')}</b> <button class="small" data-act="showall">Alle anzeigen</button>`;
+  }
+}
 function showTab(name) {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   document.querySelectorAll('.tab').forEach(t => t.hidden = t.id !== 'tab-' + name);
@@ -842,6 +938,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const st = (e.shiftKey ? 10 : 1) * (opt.grid || 1);
     const dx = e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, dy = e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0;
+    if (isLocked(o, sel.kind)) return;
     if (o.parent) { o.parent.x += dx; o.parent.z += dy; } else { o.x += dx; o.y += dy; }
     commit(); refresh({});
   }
@@ -878,7 +975,10 @@ $('#print').onclick = () => {
   c.removeAttribute('id'); c.removeAttribute('hidden'); c.setAttribute('viewBox', `${-40} ${-40} ${S.room.w + 80} ${S.room.l + 80}`);
   $('#printReport').innerHTML = `<h1>SEG-Lager – BRK Bereitschaft Erding</h1><div>${new Date().toLocaleDateString('de-DE')} · Raum ${fmt(S.room.w)} × ${fmt(S.room.l)} cm</div>${c.outerHTML}<h2>Prüfung</h2>` +
     (ST.issues.length ? '<ul>' + ST.issues.map(i => `<li>${esc(i.msg)}</li>`).join('') + '</ul>' : '<p>Keine Probleme.</p>') + '<h2>Belegung</h2>' + reportHTML();
+  const th = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute('data-theme', 'light');
   window.print();
+  if (th) document.documentElement.setAttribute('data-theme', th); else document.documentElement.removeAttribute('data-theme');
 };
 
 /* ---------- Gesamt-Refresh ---------- */
@@ -886,8 +986,8 @@ let saveT = null;
 function refresh(o) {
   ST = analyze();
   if (mode === '2d') renderPlan();
-  renderObjList(); renderReport(); renderStatus(); renderPillarList();
-  if (o.rebuild) buildInspector();
+  renderObjList(); renderReport(); renderStatus(); renderPillarList(); renderSolo();
+  if (o.rebuild) { buildInspector(); buildRoomTab(); }
   syncForms();
   if (mode === '3d' && window.render3D) render3D();
   $('#undo').disabled = hIdx === 0; $('#redo').disabled = hIdx >= hist.length - 1;
@@ -898,3 +998,23 @@ buildRoomTab(); buildObjectsTab();
 ST = analyze();
 fit(); refresh({rebuild: true, room: true});
 window.addEventListener('resize', () => { if (!drag && mode === '2d') fit(); });
+
+/* ---------- Hell/Dunkel ---------- */
+const THEME_KEY = 'seg-lager-theme';
+function isDark() {
+  const t = document.documentElement.getAttribute('data-theme');
+  return t ? t === 'dark' : !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function themeChanged() {
+  $('#theme').textContent = isDark() ? 'Hell' : 'Dunkel';
+  if (mode === '3d' && window.render3D && window.T3) render3D();
+}
+try { const t = localStorage.getItem(THEME_KEY); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+$('#theme').onclick = () => {
+  const t = isDark() ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  themeChanged();
+};
+if (window.matchMedia) { const mq = matchMedia('(prefers-color-scheme: dark)'); (mq.addEventListener ? mq.addEventListener('change', themeChanged) : mq.addListener && mq.addListener(themeChanged)); }
+themeChanged();

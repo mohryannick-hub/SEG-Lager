@@ -191,27 +191,28 @@ function buildItem(it, world) {
   }
   world.add(g);
   if ($('#g3labels').checked) {
-    const s = labelSprite(it.name); s.position.set(it.x, it.h + 20, it.y); world.add(s);
+    const s = labelSprite((it.locked ? '🔒 ' : '') + it.name); s.position.set(it.x, it.h + 20, it.y); world.add(s);
   }
 }
 
 function render3D() {
   if (!T3) init3D();
-  const W = T3.world, R = S.room;
+  const W = T3.world, R = S.room, dk = isDark();
+  T3.scene.background.set(dk ? '#12161b' : '#e9ecef');
   while (W.children.length) W.remove(W.children[0]);
   if (T3.grid) { T3.grid.geometry.dispose(); T3.grid = null; }
   // Boden + Raster
-  mk(W, R.w, 2, R.l, R.w / 2, -1, R.l / 2, '#fafaf7', 1, false);
+  mk(W, R.w, 2, R.l, R.w / 2, -1, R.l / 2, dk ? '#3a424c' : '#fafaf7', 1, false);
   const pts = [];
   for (let x = 0; x <= R.w; x += 100) pts.push(x, 0.3, 0, x, 0.3, R.l);
   for (let z = 0; z <= R.l; z += 100) pts.push(0, 0.3, z, R.w, 0.3, z);
   const gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  T3.grid = new THREE.LineSegments(gg, new THREE.LineBasicMaterial({color: 0xcfd3d9})); T3.grid.raycast = noRay; W.add(T3.grid);
+  T3.grid = new THREE.LineSegments(gg, lmat(dk ? '#56606b' : '#cfd3d9', 1, true)); T3.grid.raycast = noRay; W.add(T3.grid);
   // Wände mit Türöffnung
   const high = $('#g3walls').checked, wh = high ? Math.max(R.h, 100) : 40, D = S.door;
   const addWall = (wall, a, b, y0, y1) => {
     if (b - a < 0.5 || y1 - y0 < 0.5) return;
-    const along = (a + b) / 2, len = b - a, hgt = y1 - y0, op = high ? 0.28 : 1, T = 12, col = '#3a3f45';
+    const along = (a + b) / 2, len = b - a, hgt = y1 - y0, op = high ? 0.28 : 1, T = 12, col = dk ? '#7b848e' : '#3a3f45';
     if (wall === 'N') mk(W, len, hgt, T, along, y0 + hgt / 2, -T / 2, col, op);
     else if (wall === 'S') mk(W, len, hgt, T, along, y0 + hgt / 2, R.l + T / 2, col, op);
     else if (wall === 'W') mk(W, T, hgt, len, -T / 2, y0 + hgt / 2, along, col, op);
@@ -232,7 +233,7 @@ function render3D() {
     m.userData.pick = {kind: 'pillar', id: p.id};
     if (sel && sel.kind === 'pillar' && sel.id === p.id) wire(W, p.w + 2, Math.max(R.h, 100) + 2, p.d + 2, p.x + p.w / 2, Math.max(R.h, 100) / 2, p.y + p.d / 2, T3.selMat);
   });
-  S.items.filter(i => !i.parent).forEach(it => buildItem(it, W));
+  S.items.filter(i => !i.parent && !isHidden(i)).forEach(it => buildItem(it, W));
   T3.dirty = true;
 }
 
@@ -308,6 +309,7 @@ function bindEvents3D() {
       const {kind, id} = h.pick, changed = !sel || sel.kind !== kind || sel.id !== id;
       sel = {kind, id}; if (changed) { selCell = null; refresh({rebuild: true}); }
       const o = findSel();
+      if (isLocked(o, kind)) { d3 = {mode: 'orbit', x: e.clientX, y: e.clientY, moved: false, keep: true}; return; }
       d3 = {mode: 'obj', kind, id, moved: false, sx: e.clientX, sy: e.clientY, p0: kind === 'door' ? null : groundPt(e), o0: (kind === 'door' || (kind === 'item' && o.parent)) ? null : [o.x, o.y]};
     } else {
       d3 = {mode: (e.button === 2 || e.button === 1 || e.shiftKey) ? 'pan' : 'orbit', x: e.clientX, y: e.clientY, moved: false};
@@ -355,7 +357,7 @@ function bindEvents3D() {
     if (ptrs.size === 1) { const [x, y] = [...ptrs.values()][0]; d3 = {mode: 'orbit', x, y, moved: true}; return; }
     if (!d3) return;
     if (d3.mode === 'obj' && d3.moved) { commit(); refresh({rebuild: true, room: true}); }
-    else if (d3.mode === 'orbit' && !d3.moved) { if (sel) { sel = null; selCell = null; refresh({rebuild: true}); } }
+    else if (d3.mode === 'orbit' && !d3.moved && !d3.keep) { if (sel) { sel = null; selCell = null; refresh({rebuild: true}); } }
     if (ptrs.size === 0) d3 = null;
   };
   c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
