@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SEG-Lager Planer – BRK Bereitschaft Erding</title>
 <link rel="stylesheet" href="style.css">
+<script src="vendor/three.min.js"></script>
 </head>
 <body>
 <header class="top">
   <div class="brand"><span class="cross">+</span><div><b>SEG-Lager Planer</b><small>BRK Bereitschaft Erding</small></div></div>
   <div class="status" id="status"></div>
+  <div class="syncbox"><span id="sync" class="pill" hidden></span><button id="syncBtn" class="small" hidden>Diesen Plan teilen</button><button id="linkBtn" class="small" hidden>Link kopieren</button></div>
   <div class="actions">
     <button id="undo" title="Rückgängig (Strg+Z)">↶</button>
     <button id="redo" title="Wiederholen (Strg+Y)">↷</button>
@@ -17,6 +19,7 @@
     <button id="import">Import</button>
     <button id="print">Drucken</button>
     <button id="reset" class="danger">Neu</button>
+    <button id="theme" title="Hell/Dunkel umschalten">Dunkel</button>
     <input type="file" id="file" accept=".json,application/json" hidden>
   </div>
 </header>
@@ -35,17 +38,32 @@
 
   <section class="stage">
     <div class="toolbar">
+      <span class="seg"><button data-mode="2d" class="on">2D</button><button data-mode="3d">3D</button></span>
+      <button id="shelfBtn" title="Regal oder Regalgruppe im Seitenfenster öffnen">Regalansicht</button>
       <label>Raster
         <select id="grid"><option value="0">aus</option><option value="1">1 cm</option><option value="5" selected>5 cm</option><option value="10">10 cm</option><option value="25">25 cm</option></select>
       </label>
-      <label><input type="checkbox" id="zones" checked> Türfreiraum</label>
-      <label><input type="checkbox" id="dims" checked> Abstände</label>
+      <label class="only2d"><input type="checkbox" id="zones" checked> Freiräume</label>
+      <label class="only2d"><input type="checkbox" id="dims" checked> Abstände</label>
       <label><input type="checkbox" id="heat"> Lastfarben</label>
+      <span class="only3d"><label><input type="checkbox" id="g3doors" checked> Türen offen</label>
+      <label><input type="checkbox" id="g3walls"> Wände hoch</label>
+      <label><input type="checkbox" id="g3labels" checked> Namen</label>
+      <button class="small" data-p3="iso">Schräg</button><button class="small" data-p3="top">Oben</button><button class="small" data-p3="front">Front</button>
+      <button class="small" id="focus3" title="Auswahl heranholen (auch Doppelklick)">Fokus</button></span>
+      <span id="soloBar" class="solo" hidden></span>
       <span class="sp"></span>
       <button id="zoomOut">−</button><button id="zoomIn">+</button><button id="fit">Einpassen</button>
     </div>
     <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
-    <div class="hint">Ziehen = verschieben · Mausrad = Zoom · Leertaste/Hintergrund ziehen = Ansicht · R = drehen · Entf = löschen · Pfeiltasten = schieben · Alt = ohne Einrasten</div>
+    <canvas id="gl" hidden></canvas><div id="tip" hidden></div>
+    <div id="shelf" class="shelfwin" hidden>
+      <div class="shead"><b>Regalansicht</b><select id="shelfScope" title="Anzuzeigendes Regal oder Gruppe"></select>
+        <span class="sp"></span><button id="shelfWide" class="small" title="Fenster breiter/schmaler">Breit</button><button id="shelfClose" class="ib" title="Schließen" aria-label="Schließen">✕</button></div>
+      <div id="shelfBody"></div>
+      <div id="shelfPool"></div>
+    </div>
+    <div class="hint">2D: Ziehen = verschieben, Hintergrund ziehen = Ansicht · 3D: Hintergrund ziehen = drehen (Shift/rechte Maustaste = verschieben), Kisten in Fächer ziehen · Mausrad/Pinch = Zoom · R = drehen · Entf = löschen · Alt = ohne Einrasten</div>
   </section>
 
   <aside class="side" id="right"></aside>
@@ -53,5 +71,9 @@
 
 <div id="printReport" class="print-only"></div>
 <script src="app.js"></script>
+<script src="view3d.js"></script>
+<script src="shelf.js"></script>
+<script src="config.js"></script>
+<script src="sync.js"></script>
 </body>
 </html>
