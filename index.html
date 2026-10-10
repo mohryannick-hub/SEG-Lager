@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEG-Lager Planer – BRK Bereitschaft Erding</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="cross">+</span><div><b>SEG-Lager Planer</b><small>BRK Bereitschaft Erding</small></div></div>
+  <div class="status" id="status"></div>
+  <div class="actions">
+    <button id="undo" title="Rückgängig (Strg+Z)">↶</button>
+    <button id="redo" title="Wiederholen (Strg+Y)">↷</button>
+    <button id="export">Export</button>
+    <button id="import">Import</button>
+    <button id="print">Drucken</button>
+    <button id="reset" class="danger">Neu</button>
+    <input type="file" id="file" accept=".json,application/json" hidden>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="side" id="left">
+    <nav class="tabs" id="tabs">
+      <button data-tab="room" class="on">Raum</button>
+      <button data-tab="objects">Objekte</button>
+      <button data-tab="report">Übersicht</button>
+    </nav>
+    <section class="tab" id="tab-room"></section>
+    <section class="tab" id="tab-objects" hidden></section>
+    <section class="tab" id="tab-report" hidden></section>
+  </aside>
+
+  <section class="stage">
+    <div class="toolbar">
+      <label>Raster
+        <select id="grid"><option value="0">aus</option><option value="1">1 cm</option><option value="5" selected>5 cm</option><option value="10">10 cm</option><option value="25">25 cm</option></select>
+      </label>
+      <label><input type="checkbox" id="zones" checked> Türfreiraum</label>
+      <label><input type="checkbox" id="dims" checked> Abstände</label>
+      <label><input type="checkbox" id="heat"> Lastfarben</label>
+      <span class="sp"></span>
+      <button id="zoomOut">−</button><button id="zoomIn">+</button><button id="fit">Einpassen</button>
+    </div>
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="hint">Ziehen = verschieben · Mausrad = Zoom · Leertaste/Hintergrund ziehen = Ansicht · R = drehen · Entf = löschen · Pfeiltasten = schieben · Alt = ohne Einrasten</div>
+  </section>
+
+  <aside class="side" id="right"></aside>
+</main>
+
+<div id="printReport" class="print-only"></div>
+<script src="app.js"></script>
+</body>
+</html>
