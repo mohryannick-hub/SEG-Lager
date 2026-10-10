@@ -103,6 +103,7 @@ let S = loadState() || defaultState();
 let sel = null;           // {kind:'item'|'pillar'|'door', id}
 let selCell = null;       // {id, f, l} – aufgeklapptes Fach im Inspektor
 let mode = '2d';
+let RO = false;           // nur Ansicht (gemeinsamer Plan, kein Schreibrecht)
 let solo = null;          // {type:'group'|'item', id} – nur diese anzeigen (nicht gespeichert)
 let view = {x: -60, y: -60, w: 1020, h: 720};
 const opt = {grid: 5, zones: true, dims: true, heat: false};
@@ -118,6 +119,7 @@ function commit() {
   if (hist.length > 100) { hist.shift(); hIdx--; }
 }
 function undo(d) {
+  if (RO) return;
   const n = hIdx + d; if (n < 0 || n >= hist.length) return;
   hIdx = n; S = JSON.parse(hist[hIdx]);
   if (sel && !findSel()) sel = null;
@@ -345,7 +347,7 @@ function isHidden(it) {
   if (solo) return solo.type === 'group' ? t.group !== solo.id : t.id !== solo.id;
   return !!(t.hidden || (t.group && grpOf(t.group) && grpOf(t.group).hidden));
 }
-function isLocked(o, kind) { return kind === 'door' ? !!S.door.locked : !!(o && o.locked); }
+function isLocked(o, kind) { if (RO) return true; return kind === 'door' ? !!S.door.locked : !!(o && o.locked); }
 const IC = (p, w) => `<svg viewBox="0 0 24 24" width="${w || 16}" height="${w || 16}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const ICONS = {
   eye: IC('<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>'),
@@ -390,6 +392,7 @@ function syncForms() {
 }
 let OUT = {}, BAR = {};
 document.addEventListener('change', e => {
+  if (RO) return;
   const el = e.target.closest('[data-b]'); if (!el) return;
   const d = B[el.dataset.b]; if (!d) return;
   let v = el.value;
@@ -415,6 +418,7 @@ document.addEventListener('toggle', e => {
 /* ---------- Auswahl, Hinzufügen, Löschen ---------- */
 function select(s) { sel = s; selCell = null; refresh({rebuild: true}); }
 function addItem(type) {
+  if (RO) return;
   const it = newItem(type, {name: nextName(TYPES[type].label)});
   it.x = r1(S.room.w / 2); it.y = r1(S.room.l / 2);
   S.items.push(it); sel = {kind: 'item', id: it.id}; commit(); refresh({rebuild: true});
@@ -425,7 +429,7 @@ function nextName(base) {
   return base + ' ' + n;
 }
 function dupSel() {
-  if (!sel || sel.kind !== 'item') return;
+  if (RO || !sel || sel.kind !== 'item') return;
   const src = findItem(sel.id), c = clone(src); c.id = uid(); c.name += ' (Kopie)'; c.locked = false;
   if (c.parent) { S.items.push(c); autoPlace(c); } else { c.x += 20; c.y += 20; S.items.push(c); }
   sel = {kind: 'item', id: c.id}; commit(); refresh({rebuild: true});
@@ -442,6 +446,7 @@ function delSel() {
   sel = null; commit(); refresh({rebuild: true, room: true});
 }
 function addPillar() {
+  if (RO) return;
   const p = {id: uid(), x: Math.round(S.room.w / 2 - 20), y: Math.round(S.room.l / 2 - 20), w: 40, d: 40};
   S.pillars.push(p); sel = {kind: 'pillar', id: p.id}; commit(); refresh({rebuild: true, room: true});
 }
@@ -906,6 +911,7 @@ document.addEventListener('click', e => {
   const act = e.target.closest('[data-act]');
   if (act) {
     const k = act.dataset.act, g = act.dataset.g && grpOf(act.dataset.g), it = act.dataset.id && findItem(act.dataset.id);
+    if (RO && !['gsolo', 'isolo', 'shelf', 'gshelf', 'showall'].includes(k)) return;
     const done = () => { commit(); refresh({rebuild: true}); };
     if (k === 'del') delSel(); else if (k === 'dup') dupSel(); else if (k === 'rot') rotSel();
     else if (k === 'ivis' && it) { it.hidden = !it.hidden; done(); }
@@ -922,6 +928,7 @@ document.addEventListener('click', e => {
     else if (k === 'gsolo' && g) setSolo(solo && solo.type === 'group' && solo.id === g.id ? null : {type: 'group', id: g.id});
     else if (k === 'gadd' && g) { const o = findSel(); if (o && sel.kind === 'item' && !o.parent) { o.group = g.id; done(); } }
     else if (k === 'gdel' && g) { S.items.forEach(i => { if (i.group === g.id) i.group = null; }); S.groups = S.groups.filter(x => x !== g); if (solo && solo.id === g.id) solo = null; done(); }
+    else if (k === 'showall' && RO) setSolo(null);
     else if (k === 'showall') { solo = null; S.items.forEach(i => { i.hidden = false; }); S.groups.forEach(x => { x.hidden = false; }); done(); }
     else if (k === 'addc' || k === 'delc') {
       const parts = act.dataset.c.split(':'), ci = findItem(parts[0]); if (!ci) return;
@@ -979,7 +986,7 @@ $('#export').onclick = () => {
   a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], {type: 'application/json'}));
   a.download = 'seg-lager-plan.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
-$('#import').onclick = () => $('#file').click();
+$('#import').onclick = () => { if (!RO) $('#file').click(); };
 function importText(t) {
   const s = JSON.parse(t);
   if (!s.room || !Array.isArray(s.items)) throw new Error('format');
@@ -990,6 +997,7 @@ $('#file').onchange = e => {
   f.text().then(importText).catch(() => alert('Datei konnte nicht gelesen werden.')).finally(() => { e.target.value = ''; });
 };
 $('#reset').onclick = () => {
+  if (RO) return;
   const c = confirm('Plan zurücksetzen?\nOK = Beispielplan laden · Abbrechen = nichts ändern');
   if (!c) return;
   const empty = confirm('Mit leerem Raum beginnen?\nOK = leerer Raum · Abbrechen = Beispielplan');
@@ -1010,6 +1018,10 @@ $('#print').onclick = () => {
 };
 
 /* ---------- Gesamt-Refresh ---------- */
+function applyRO() {
+  document.body.classList.toggle('ro', RO);
+  if (RO) document.querySelectorAll('[data-b]').forEach(el => { el.disabled = true; });
+}
 let saveT = null;
 function refresh(o) {
   ST = analyze();
@@ -1019,8 +1031,9 @@ function refresh(o) {
   if (o.rebuild) { buildInspector(); buildRoomTab(); }
   syncForms();
   if (mode === '3d' && window.render3D) render3D();
+  applyRO();
   $('#undo').disabled = hIdx === 0; $('#redo').disabled = hIdx >= hist.length - 1;
-  clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {} }, 300);
+  clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {} if (window.onPlanChanged) onPlanChanged(); }, 300);
 }
 
 buildRoomTab(); buildObjectsTab();

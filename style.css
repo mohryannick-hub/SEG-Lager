@@ -34,6 +34,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%}
 body{margin:0;font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
 button,select,input{font:inherit}
@@ -204,3 +205,6 @@ table.rep td.n{text-align:right;white-space:nowrap}
   .print-only h2{font-size:14px;margin:12px 0 4px;break-after:avoid}
   .print-only table{break-inside:avoid}
 }
+
+.syncbox{display:flex;align-items:center;gap:8px}
+.ro [data-add],.ro #undo,.ro #redo,.ro #import,.ro #reset,.ro #addPillar,.ro [data-act="gnew"],.ro [data-act="ivis"],.ro [data-act="ilock"],.ro [data-act="gvis"],.ro [data-act="gadd"],.ro [data-act="gdel"],.ro [data-act="del"],.ro [data-act="dup"],.ro [data-act="rot"],.ro [data-act="addc"],.ro [data-act="delc"]{display:none!important}

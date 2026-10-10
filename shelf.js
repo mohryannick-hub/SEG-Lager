@@ -106,7 +106,7 @@ document.addEventListener('pointerdown', e => {
   const bx = e.target.closest('#shelf [data-box]'); if (!bx || e.button) return;
   const k = findItem(bx.dataset.box); if (!k) return;
   e.preventDefault();
-  sd = {id: k.id, sx: e.clientX, sy: e.clientY, moved: false, ghost: null, locked: k.locked};
+  sd = {id: k.id, sx: e.clientX, sy: e.clientY, moved: false, ghost: null, locked: k.locked || RO};
 });
 window.addEventListener('pointermove', e => {
   if (!sd) return;
