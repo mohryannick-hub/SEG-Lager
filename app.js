@@ -1,69 +1,107 @@
 'use strict';
 /* SEG-Lager Planer – alle Maße in cm, Gewichte in kg.
    Koordinaten: x nach rechts, y nach unten, Ursprung = Innenecke oben links.
-   Objekte: x/y = Mittelpunkt, rot = Drehung im Uhrzeigersinn, "Front" = untere Kante (lokal +y). */
+   Objekte: x/y = Mittelpunkt, rot = Drehung im Uhrzeigersinn, "Front" = untere Kante (lokal +y).
+   Kisten können in Fächer (Feld/Ebene) von Schränken, Regalen, Rollwagen und Tischen gestellt werden
+   (item.parent = {id, f, l, x, z, rot}); x/z = Abstand von der linken/hinteren Innenkante des Fachs. */
 
 const LS_KEY = 'seg-lager-v1';
 
 /* ---------- Objekttypen ---------- */
 const TYPES = {
-  schrank:   {label: 'Metallschrank',   sub: 'Flügeltüren',  w: 100, d: 50, h: 195, fields: 1, levels: 5, maxFach: 60,  maxFeld: 250,  empty: 70, color: '#9db4c6', doors: 2, clearance: 0},
-  regal:     {label: 'Schwerlastregal', sub: 'Felder/Fachböden', w: 200, d: 60, h: 200, fields: 2, levels: 4, maxFach: 250, maxFeld: 1000, empty: 90, color: '#e59a63', doors: 0, clearance: 80},
-  rollwagen: {label: 'Rollwagen',       sub: 'mehrere Ebenen', w: 80, d: 50, h: 90,  fields: 1, levels: 3, maxFach: 50,  maxFeld: 150,  empty: 25, color: '#e8c95a', doors: 0, clearance: 0},
-  kiste:     {label: 'Kiste',           sub: 'Box/Behälter', w: 60,  d: 40, h: 32,  fields: 1, levels: 1, maxFach: 30,  maxFeld: 30,   empty: 2,  color: '#b98a5a', doors: 0, clearance: 0},
-  tisch:     {label: 'Tisch',           sub: 'Arbeits-/Packtisch', w: 160, d: 80, h: 75, fields: 1, levels: 1, maxFach: 100, maxFeld: 100, empty: 30, color: '#d8cdb0', doors: 0, clearance: 60},
+  schrank:   {label: 'Metallschrank',   w: 100, d: 50, h: 195, fields: 1, levels: 5, maxFach: 60,  maxFeld: 250,  empty: 70, color: '#9db4c6', doors: 2, clearance: 0},
+  regal:     {label: 'Schwerlastregal', w: 200, d: 60, h: 200, fields: 2, levels: 4, maxFach: 250, maxFeld: 1000, empty: 90, color: '#e59a63', doors: 0, clearance: 80},
+  rollwagen: {label: 'Rollwagen',       w: 80,  d: 50, h: 90,  fields: 1, levels: 3, maxFach: 50,  maxFeld: 150,  empty: 25, color: '#e8c95a', doors: 0, clearance: 0},
+  kiste:     {label: 'Kiste',           w: 60,  d: 40, h: 32,  fields: 1, levels: 1, maxFach: 30,  maxFeld: 30,   empty: 2,  color: '#b98a5a', doors: 0, clearance: 0},
+  tisch:     {label: 'Tisch',           w: 160, d: 80, h: 75,  fields: 1, levels: 1, maxFach: 100, maxFeld: 100, empty: 30, color: '#d8cdb0', doors: 0, clearance: 60},
+};
+/* Aufbau der Fächer: wt = Wandstärke seitlich/hinten, tb = Bodenstärke, base = Höhe über Boden (Rollen) */
+const PROF = {
+  schrank:   {wt: 2,   tb: 1.5, base: 0, closed: true},
+  regal:     {wt: 3,   tb: 4,   base: 0, closed: false},
+  rollwagen: {wt: 1.5, tb: 3,   base: 8, closed: false},
+  tisch:     {wt: 0,   tb: 3,   base: 0, closed: false},
+  kiste:     {wt: 1.5, tb: 1,   base: 0, closed: false},
 };
 const WALLS = {N: 'Nord (oben)', E: 'Ost (rechts)', S: 'Süd (unten)', W: 'West (links)'};
+const HOST_TYPES = ['schrank', 'regal', 'rollwagen', 'tisch'];
 
 /* ---------- Zustand ---------- */
 let uidN = 1;
 const uid = () => 'o' + (uidN++) + Math.random().toString(36).slice(2, 5);
 const clone = o => JSON.parse(JSON.stringify(o));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function makeCells(it) {
   const old = it.cells || [];
   it.cells = [];
   for (let f = 0; f < it.fields; f++) {
     it.cells.push([]);
-    for (let l = 0; l < it.levels; l++) it.cells[f].push((old[f] && old[f][l]) || {t: '', kg: 0, max: null});
+    for (let l = 0; l < it.levels; l++) {
+      let c = (old[f] && old[f][l]) || {};
+      if (!Array.isArray(c.c)) { // altes Format {t, kg}
+        c = {max: c.max == null ? null : c.max, c: (c.t || +c.kg) ? [{n: c.t || '', q: 1, kg: +c.kg || 0}] : []};
+      }
+      it.cells[f].push(c);
+    }
   }
 }
 function newItem(type, over) {
   const T = TYPES[type];
   const it = Object.assign({id: uid(), type, name: T.label, x: 100, y: 100, w: T.w, d: T.d, h: T.h, rot: 0, color: T.color,
-    fields: T.fields, levels: T.levels, maxFach: T.maxFach, maxFeld: T.maxFeld, empty: T.empty, doors: T.doors, clearance: T.clearance}, over || {});
+    fields: T.fields, levels: T.levels, maxFach: T.maxFach, maxFeld: T.maxFeld, empty: T.empty, doors: T.doors, clearance: T.clearance, parent: null}, over || {});
   makeCells(it);
   return it;
 }
 function defaultState() {
   const s = {
     room: {w: 900, l: 600, h: 280, floorLimit: 500},
-    door: {wall: 'S', offset: 60, width: 100, hinge: 'start'},
+    door: {wall: 'S', offset: 160, width: 100, slide: 'start', clear: 80},
     pillars: [{id: uid(), x: 300, y: 250, w: 40, d: 40}, {id: uid(), x: 600, y: 250, w: 40, d: 40}],
     items: [],
   };
-  const A = (t, o) => s.items.push(newItem(t, o));
-  A('schrank', {name: 'Schrank 1', x: 50, y: 25});
+  const A = (t, o) => { const it = newItem(t, o); s.items.push(it); return it; };
+  const s1 = A('schrank', {name: 'Schrank 1', x: 50, y: 25});
   A('schrank', {name: 'Schrank 2', x: 150, y: 25});
   A('schrank', {name: 'Schrank 3', x: 250, y: 25});
   A('rollwagen', {name: 'Rollwagen 1', x: 400, y: 25});
   A('rollwagen', {name: 'Rollwagen 2', x: 490, y: 25});
-  A('regal', {name: 'Regal W', x: 30, y: 300, rot: 270});
+  const reg = A('regal', {name: 'Regal W', x: 30, y: 300, rot: 270});
   A('tisch', {name: 'Packtisch', x: 650, y: 190, rot: 180});
-  A('kiste', {name: 'Kiste 1', x: 880, y: 30, rot: 90});
-  A('kiste', {name: 'Kiste 2', x: 880, y: 90, rot: 90});
-  s.items[0].cells[0][4] = {t: 'Funkgeräte', kg: 12, max: null};
-  s.items[5].cells[0][0] = {t: 'Zelt, Heizgerät', kg: 180, max: null};
+  const k1 = A('kiste', {name: 'Kiste Infusion', x: 880, y: 30, rot: 90});
+  const k2 = A('kiste', {name: 'Kiste Schlauchmaterial', x: 880, y: 90, rot: 90});
+  const k3 = A('kiste', {name: 'Kiste Verband', parent: {id: reg.id, f: 0, l: 1, x: 10, z: 8, rot: 0}});
+  const k4 = A('kiste', {name: 'Kiste Schienen', parent: {id: reg.id, f: 1, l: 1, x: 20, z: 8, rot: 0}});
+  s1.cells[0][4].c = [{n: 'Funkgeräte', q: 4, kg: 1.5}, {n: 'Ladeschalen', q: 2, kg: 3}];
+  reg.cells[0][0].c = [{n: 'Zelt 6x6 m', q: 1, kg: 120}, {n: 'Heizgerät', q: 2, kg: 30}];
+  k1.cells[0][0].c = [{n: 'Infusionslösung 500 ml', q: 12, kg: 0.6}];
+  k2.cells[0][0].c = [{n: 'Infusionsbestecke', q: 40, kg: 0.05}];
+  k3.cells[0][0].c = [{n: 'Verbandkasten groß', q: 3, kg: 2.5}, {n: 'Rettungsdecken', q: 20, kg: 0.06}];
+  k4.cells[0][0].c = [{n: 'Vakuumschienen', q: 4, kg: 2.2}];
+  return s;
+}
+function normalizeState(s) {
+  s.room = Object.assign({w: 900, l: 600, h: 280, floorLimit: 500}, s.room);
+  const od = s.door || {};
+  s.door = Object.assign({wall: 'S', offset: 160, width: 100, slide: 'start', clear: 80}, od);
+  if (od.hinge && !od.slide) s.door.slide = od.hinge;
+  delete s.door.hinge;
+  s.pillars = s.pillars || [];
+  s.items = s.items || [];
+  s.items.forEach(i => { i.id = i.id || uid(); i.parent = i.parent || null; if (i.type === 'kiste' || i.type === 'tisch') { i.fields = 1; i.levels = 1; } makeCells(i); });
   return s;
 }
 function loadState() {
-  try { const s = JSON.parse(localStorage.getItem(LS_KEY)); if (s && s.room && s.items) return s; } catch (e) {}
+  try { const s = JSON.parse(localStorage.getItem(LS_KEY)); if (s && s.room && s.items) return normalizeState(s); } catch (e) {}
   return null;
 }
 let S = loadState() || defaultState();
 let sel = null;           // {kind:'item'|'pillar'|'door', id}
+let selCell = null;       // {id, f, l} – aufgeklapptes Fach im Inspektor
+let mode = '2d';
 let view = {x: -60, y: -60, w: 1020, h: 720};
 const opt = {grid: 5, zones: true, dims: true, heat: false};
+const openCells = new Set();
 let ST = null;            // Analyseergebnis
 
 /* ---------- Historie ---------- */
@@ -86,6 +124,10 @@ const rad = d => d * Math.PI / 180;
 function toWorld(it, lx, ly) {
   const a = rad(it.rot), c = Math.cos(a), s = Math.sin(a);
   return [it.x + lx * c - ly * s, it.y + lx * s + ly * c];
+}
+function toLocal(it, wx, wy) {
+  const a = rad(it.rot), c = Math.cos(a), s = Math.sin(a), dx = wx - it.x, dy = wy - it.y;
+  return [dx * c + dy * s, -dx * s + dy * c];
 }
 const footprint = it => [[-it.w / 2, -it.d / 2], [it.w / 2, -it.d / 2], [it.w / 2, it.d / 2], [-it.w / 2, it.d / 2]].map(p => toWorld(it, p[0], p[1]));
 function frontDepth(it) { return it.type === 'schrank' ? (it.doors === 1 ? it.w : it.w / 2) : (+it.clearance || 0); }
@@ -112,69 +154,142 @@ function sat(A, B, eps) {
   }
   return true;
 }
+/* Schiebetür: Öffnung A–B in der Wand, Flügel läuft innen vor der Wand zur Seite "slide" */
+const DOOR_H = 210, LEAF_T = 5, LEAF_GAP = 3;
 function doorGeom() {
   const R = S.room, D = S.door, W = R.w, L = R.l;
-  const defs = {N: [[0, 0], [1, 0], [0, 1]], S: [[0, L], [1, 0], [0, -1]], W: [[0, 0], [0, 1], [1, 0]], E: [[W, 0], [0, 1], [-1, 0]]};
-  const [P0, u, n] = defs[D.wall];
-  const A = [P0[0] + u[0] * D.offset, P0[1] + u[1] * D.offset];
-  const B = [A[0] + u[0] * D.width, A[1] + u[1] * D.width];
-  const H = D.hinge === 'start' ? A : B, F = D.hinge === 'start' ? B : A;
-  const T = [H[0] + n[0] * D.width, H[1] + n[1] * D.width];
-  const v1 = [F[0] - H[0], F[1] - H[1]], v2 = [T[0] - H[0], T[1] - H[1]];
-  const sweep = (v1[0] * v2[1] - v1[1] * v2[0]) > 0 ? 1 : 0;
-  const zone = [A, B, [B[0] + n[0] * D.width, B[1] + n[1] * D.width], [A[0] + n[0] * D.width, A[1] + n[1] * D.width]];
-  return {A, B, H, F, T, sweep, zone, u, n, W, L};
+  const defs = {N: [[0, 0], [1, 0], [0, 1], W], S: [[0, L], [1, 0], [0, -1], W], W: [[0, 0], [0, 1], [1, 0], L], E: [[W, 0], [0, 1], [-1, 0], L]};
+  const [P0, u, n, len] = defs[D.wall];
+  const at = (a, d) => [P0[0] + u[0] * a + n[0] * d, P0[1] + u[1] * a + n[1] * d];
+  const a1 = D.slide === 'start' ? D.offset - D.width : D.offset + D.width, a2 = a1 + D.width;
+  return {
+    A: at(D.offset, 0), B: at(D.offset + D.width, 0), u, n, len, a1, a2,
+    leaf: [at(a1, LEAF_GAP), at(a2, LEAF_GAP), at(a2, LEAF_GAP + LEAF_T), at(a1, LEAF_GAP + LEAF_T)],
+    runway: [at(a1, 0), at(a2, 0), at(a2, LEAF_GAP + LEAF_T + 4), at(a1, LEAF_GAP + LEAF_T + 4)],
+    zone: [at(D.offset, 0), at(D.offset + D.width, 0), at(D.offset + D.width, D.clear), at(D.offset, D.clear)],
+    fits: a1 >= -0.5 && a2 <= len + 0.5,
+  };
 }
 
-/* ---------- Analyse ---------- */
+/* ---------- Fächer & Kisten ---------- */
+const effDims = it => (it.parent && it.parent.rot === 90) ? [it.d, it.w] : [it.w, it.d];
+/* Nutzraum eines Fachs im lokalen Koordinatensystem des Wirts (x rechts, z nach vorn, y hoch) */
+function cellGeom(h, f, l) {
+  const P = PROF[h.type] || PROF.schrank;
+  if (h.type === 'tisch') return {x0: -h.w / 2, z0: -h.d / 2, iw: h.w, id: h.d, y: h.h, ch: 999};
+  const fw = h.w / h.fields, lh = (h.h - P.base) / h.levels;
+  return {
+    x0: -h.w / 2 + f * fw + P.wt, z0: -h.d / 2 + P.wt, iw: fw - 2 * P.wt, id: h.d - 2 * P.wt,
+    y: P.base + l * lh + P.tb,
+    ch: lh - P.tb - ((P.closed && l === h.levels - 1) ? P.tb : 0),
+  };
+}
 function cellMax(it, c) { return c.max != null && c.max !== '' ? +c.max : it.maxFach; }
+const cellOwn = c => c.c.reduce((s, r) => s + (+r.q || 0) * (+r.kg || 0), 0);
+function unplace(it, h) {
+  const p = it.parent; it.parent = null;
+  if (h && p) { const g = cellGeom(h, p.f, p.l), w = toWorld(h, g.x0 + g.iw / 2, h.d / 2 + it.d / 2 + 10); it.x = r1(w[0]); it.y = r1(w[1]); it.rot = h.rot; }
+  else { it.x = r1(S.room.w / 2); it.y = r1(S.room.l / 2); }
+}
+function fixParents() {
+  S.items.forEach(it => {
+    if (!it.parent) return;
+    const h = findItem(it.parent.id);
+    if (!h || it.type !== 'kiste' || !HOST_TYPES.includes(h.type) || h.parent) { unplace(it, h && !h.parent ? h : null); return; }
+    it.parent.f = clamp(it.parent.f | 0, 0, h.fields - 1);
+    it.parent.l = clamp(it.parent.l | 0, 0, h.levels - 1);
+    it.parent.rot = it.parent.rot === 90 ? 90 : 0;
+    it.parent.x = +it.parent.x || 0; it.parent.z = +it.parent.z || 0;
+  });
+}
+function rectsOverlap(a, b) { // {x,z,w,d}
+  return Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.5 && Math.min(a.z + a.d, b.z + b.d) - Math.max(a.z, b.z) > 0.5;
+}
+const prect = k => { const [w, d] = effDims(k); return {x: k.parent.x, z: k.parent.z, w, d}; };
+function siblings(it) { return S.items.filter(k => k !== it && k.parent && k.parent.id === it.parent.id && k.parent.f === it.parent.f && k.parent.l === it.parent.l); }
+function autoPlace(it) {
+  const p = it.parent, h = findItem(p.id), g = cellGeom(h, p.f, p.l), [ew, ed] = effDims(it);
+  p.z = Math.max(0, r1((g.id - ed) / 2));
+  const others = siblings(it).map(prect);
+  for (let x = 0; x <= g.iw - ew + 0.01; x += 1) { p.x = x; if (!others.some(o => rectsOverlap(o, prect(it)))) return; }
+  p.x = 0;
+}
+function cellLabel(h, f, l) { return `${h.name} · ${h.fields > 1 ? 'Feld ' + (f + 1) + ' · ' : ''}Ebene ${l + 1}`; }
+
+/* ---------- Analyse ---------- */
 function analyze() {
+  fixParents();
   const R = S.room, out = {items: {}, issues: [], bad: new Set(), totals: {content: 0, total: 0, area: 0}};
   const add = (sev, id, msg) => out.issues.push({sev, id, msg});
-  const polys = {}, fronts = {};
-  S.items.forEach(it => {
-    polys[it.id] = footprint(it); fronts[it.id] = frontZone(it);
-    const st = {fieldSum: [], over: false, ratio: 0, content: 0};
+  const kids = {};
+  S.items.forEach(it => { if (it.parent) (kids[it.parent.id] = kids[it.parent.id] || []).push(it); });
+  const calc = it => {
+    const st = {cells: [], fieldSum: [], over: false, ratio: 0, content: 0, kids: kids[it.id] || []};
     it.cells.forEach((col, f) => {
-      let sum = 0;
+      let sum = 0; st.cells.push([]);
       col.forEach((c, l) => {
-        const kg = +c.kg || 0, mx = cellMax(it, c); sum += kg;
-        if (mx > 0) st.ratio = Math.max(st.ratio, kg / mx);
-        if (kg > mx) { st.over = true; add('err', it.id, `${it.name}: Fachlast überschritten (Feld ${f + 1}, Ebene ${l + 1}: ${kg} / ${mx} kg)`); }
+        const own = cellOwn(c);
+        const boxes = st.kids.filter(k => k.parent.f === f && k.parent.l === l).reduce((s, k) => s + out.items[k.id].total, 0);
+        const load = own + boxes, mx = cellMax(it, c), ratio = mx > 0 ? load / mx : 0;
+        st.cells[f].push({own, boxes, load, max: mx, ratio});
+        sum += load; st.ratio = Math.max(st.ratio, ratio);
+        if (load > mx + 1e-9) { st.over = true; add('err', it.id, `${it.name}: Fachlast überschritten (${it.fields > 1 ? 'Feld ' + (f + 1) + ', ' : ''}Ebene ${l + 1}: ${fmt(load)} / ${fmt(mx)} kg)`); }
       });
       st.fieldSum.push(sum); st.content += sum;
       if (it.maxFeld > 0) st.ratio = Math.max(st.ratio, sum / it.maxFeld);
-      if (sum > it.maxFeld) { st.over = true; add('err', it.id, `${it.name}: Feldlast überschritten (Feld ${f + 1}: ${sum} / ${it.maxFeld} kg)`); }
+      if (sum > it.maxFeld + 1e-9) { st.over = true; add('err', it.id, `${it.name}: Feldlast überschritten (${it.fields > 1 ? 'Feld ' + (f + 1) + ': ' : ''}${fmt(sum)} / ${fmt(it.maxFeld)} kg)`); }
     });
     st.total = st.content + (+it.empty || 0);
+    out.items[it.id] = st;
+  };
+  S.items.filter(i => i.type === 'kiste').forEach(calc);
+  S.items.filter(i => i.type !== 'kiste').forEach(calc);
+
+  const top = S.items.filter(i => !i.parent);
+  const polys = {}, fronts = {};
+  top.forEach(it => {
+    const st = out.items[it.id];
+    polys[it.id] = footprint(it); fronts[it.id] = frontZone(it);
     st.pressure = st.total / ((it.w * it.d) / 1e4);
     if (R.floorLimit > 0 && st.pressure > R.floorLimit) add('warn', it.id, `${it.name}: Bodenbelastung ${Math.round(st.pressure)} kg/m² > ${R.floorLimit} kg/m²`);
     if (R.h > 0 && it.h > R.h) add('warn', it.id, `${it.name}: Höhe ${it.h} cm > Raumhöhe ${R.h} cm`);
-    out.items[it.id] = st;
     out.totals.content += st.content; out.totals.total += st.total; out.totals.area += it.w * it.d;
   });
-  const room = [[0, 0], [R.w, 0], [R.w, R.l], [0, R.l]];
-  const dz = doorGeom().zone;
+  // Kisten in Fächern: Passung und Überschneidung
+  S.items.filter(i => i.parent).forEach(k => {
+    const h = findItem(k.parent.id), p = k.parent, g = cellGeom(h, p.f, p.l), [ew, ed] = effDims(k);
+    const where = cellLabel(h, p.f, p.l);
+    if (ew > g.iw + 0.5 || ed > g.id + 0.5) { add('warn', k.id, `${k.name} ist zu groß für das Fach (${where}: nutzbar ${fmt(g.iw)} × ${fmt(g.id)} cm)`); out.bad.add(k.id); }
+    else if (p.x < -0.5 || p.z < -0.5 || p.x + ew > g.iw + 0.5 || p.z + ed > g.id + 0.5) { add('warn', k.id, `${k.name} ragt aus dem Fach (${where})`); out.bad.add(k.id); }
+    if (k.h > g.ch + 0.5) { add('warn', k.id, `${k.name} ist zu hoch für das Fach (${where}: ${fmt(g.ch)} cm frei)`); out.bad.add(k.id); }
+  });
+  S.items.filter(i => i.parent).forEach(k => siblings(k).forEach(o => {
+    if (S.items.indexOf(o) > S.items.indexOf(k) && rectsOverlap(prect(k), prect(o))) { add('err', k.id, `${k.name} überschneidet sich mit ${o.name} im Fach`); out.bad.add(k.id); out.bad.add(o.id); }
+  }));
+
+  const dg = doorGeom();
   const pil = S.pillars.map(pillarPoly);
-  S.items.forEach((it, i) => {
+  top.forEach((it, i) => {
     const bb = bbox(polys[it.id]);
     if (bb.minX < -0.5 || bb.minY < -0.5 || bb.maxX > R.w + 0.5 || bb.maxY > R.l + 0.5) { add('err', it.id, `${it.name}: ragt über die Raumwand hinaus`); out.bad.add(it.id); }
-    for (let j = i + 1; j < S.items.length; j++) {
-      const o = S.items[j];
+    for (let j = i + 1; j < top.length; j++) {
+      const o = top[j];
       if (sat(polys[it.id], polys[o.id], 0.5)) { add('err', it.id, `${it.name} überschneidet sich mit ${o.name}`); out.bad.add(it.id); out.bad.add(o.id); }
     }
     S.pillars.forEach((p, k) => {
       if (sat(polys[it.id], pil[k], 0.5)) { add('err', it.id, `${it.name} kollidiert mit Stützpfeiler`); out.bad.add(it.id); }
     });
-    if (sat(polys[it.id], dz, 0.5)) add('warn', it.id, `${it.name} blockiert den Türschwenkbereich`);
+    if (sat(polys[it.id], dg.zone, 0.5)) add('warn', it.id, `${it.name} versperrt den Durchgang an der Tür`);
+    if (sat(polys[it.id], dg.runway, 0.5)) add('warn', it.id, `${it.name} steht im Laufweg der Schiebetür`);
     const fz = fronts[it.id];
     if (fz) {
       let hit = null;
-      S.items.forEach(o => { if (o !== it && !hit && sat(fz, polys[o.id], 0.5)) hit = o.name; });
+      top.forEach(o => { if (o !== it && !hit && sat(fz, polys[o.id], 0.5)) hit = o.name; });
       S.pillars.forEach((p, k) => { if (!hit && sat(fz, pil[k], 0.5)) hit = 'Stützpfeiler'; });
       if (hit) { add('warn', it.id, `${it.name}: Freiraum/Türbereich vorne blockiert durch ${hit}`); out.items[it.id].frontBlocked = true; }
     }
   });
+  if (!dg.fits) add('warn', null, 'Schiebetür: neben der Türöffnung ist zu wenig Wand für den geöffneten Flügel.');
   const rArea = R.w * R.l;
   out.totals.rArea = rArea; out.totals.free = rArea ? 1 - out.totals.area / rArea : 0;
   return out;
@@ -184,7 +299,7 @@ function analyze() {
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const r1 = n => Math.round(n * 10) / 10;
-const fmt = n => (Math.round(n * 10) / 10).toLocaleString('de-DE');
+const fmt = n => (Math.round(n * 100) / 100).toLocaleString('de-DE', {maximumFractionDigits: 2});
 const findItem = id => S.items.find(i => i.id === id);
 function findSel() {
   if (!sel) return null;
@@ -194,6 +309,7 @@ function findSel() {
   return null;
 }
 function ratioClass(r) { return r > 1 ? 'err' : r > 0.85 ? 'warn' : ''; }
+const topOf = it => it.parent ? findItem(it.parent.id) : it;
 
 /* ---------- Formular-Framework ---------- */
 const B = {}; let bn = 0;
@@ -227,16 +343,25 @@ document.addEventListener('change', e => {
   const d = B[el.dataset.b]; if (!d) return;
   let v = el.value;
   if (d.type === 'number' || !d.type) {
-    v = parseFloat(v);
-    if (isNaN(v)) { syncForms(); return; }
-    if (d.min != null) v = Math.max(d.min, v);
-    if (d.max != null) v = Math.min(d.max, v);
+    if (v === '' && d.nullable) v = null;
+    else {
+      v = parseFloat(v);
+      if (isNaN(v)) { syncForms(); return; }
+      if (d.min != null) v = Math.max(d.min, v);
+      if (d.max != null) v = Math.min(d.max, v);
+    }
   }
   d.set(v); commit(); refresh({rebuild: !!d.rebuild, room: !!d.room});
 });
+document.addEventListener('toggle', e => {
+  const d = e.target; if (!d.dataset || !d.dataset.cell) return;
+  const key = d.dataset.cell;
+  if (d.open) { openCells.add(key); const [id, f, l] = key.split(':'); selCell = {id, f: +f, l: +l}; } else { openCells.delete(key); if (selCell && key === `${selCell.id}:${selCell.f}:${selCell.l}`) selCell = null; }
+  if (mode === '3d') render3D();
+}, true);
 
 /* ---------- Auswahl, Hinzufügen, Löschen ---------- */
-function select(s) { sel = s; refresh({rebuild: true}); }
+function select(s) { sel = s; selCell = null; refresh({rebuild: true}); }
 function addItem(type) {
   const it = newItem(type, {name: nextName(TYPES[type].label)});
   it.x = r1(S.room.w / 2); it.y = r1(S.room.l / 2);
@@ -249,13 +374,17 @@ function nextName(base) {
 }
 function dupSel() {
   if (!sel || sel.kind !== 'item') return;
-  const c = clone(findItem(sel.id)); c.id = uid(); c.name += ' (Kopie)'; c.x += 20; c.y += 20;
-  S.items.push(c); sel = {kind: 'item', id: c.id}; commit(); refresh({rebuild: true});
+  const src = findItem(sel.id), c = clone(src); c.id = uid(); c.name += ' (Kopie)';
+  if (c.parent) { S.items.push(c); autoPlace(c); } else { c.x += 20; c.y += 20; S.items.push(c); }
+  sel = {kind: 'item', id: c.id}; commit(); refresh({rebuild: true});
 }
 function delSel() {
   if (!sel) return;
-  if (sel.kind === 'item') S.items = S.items.filter(i => i.id !== sel.id);
-  else if (sel.kind === 'pillar') S.pillars = S.pillars.filter(p => p.id !== sel.id);
+  if (sel.kind === 'item') {
+    const h = findItem(sel.id);
+    S.items.filter(k => k.parent && k.parent.id === sel.id).forEach(k => unplace(k, h));
+    S.items = S.items.filter(i => i.id !== sel.id);
+  } else if (sel.kind === 'pillar') S.pillars = S.pillars.filter(p => p.id !== sel.id);
   else return;
   sel = null; commit(); refresh({rebuild: true, room: true});
 }
@@ -263,22 +392,42 @@ function addPillar() {
   const p = {id: uid(), x: Math.round(S.room.w / 2 - 20), y: Math.round(S.room.l / 2 - 20), w: 40, d: 40};
   S.pillars.push(p); sel = {kind: 'pillar', id: p.id}; commit(); refresh({rebuild: true, room: true});
 }
+function rotSel() {
+  const o = findSel(); if (!o || sel.kind !== 'item') return;
+  if (o.parent) { o.parent.rot = o.parent.rot === 90 ? 0 : 90; autoFit(o); } else o.rot = (o.rot + 90) % 360;
+  commit(); refresh({});
+}
+function autoFit(k) { // Position im Fach nach Drehung wieder in den Nutzraum schieben
+  const h = findItem(k.parent.id), g = cellGeom(h, k.parent.f, k.parent.l), [ew, ed] = effDims(k);
+  k.parent.x = clamp(k.parent.x, 0, Math.max(0, g.iw - ew)); k.parent.z = clamp(k.parent.z, 0, Math.max(0, g.id - ed));
+}
+function setLocation(it, v) {
+  if (v === 'floor') { if (it.parent) { const h = findItem(it.parent.id); unplace(it, h); } return; }
+  const [id, f, l] = v.split('|');
+  it.parent = {id, f: +f, l: +l, x: 0, z: 0, rot: it.parent ? it.parent.rot : 0};
+  autoPlace(it);
+}
 
 /* ---------- Raum-Tab ---------- */
+const num = (label, get, set, x) => Object.assign({label, type: 'number', get, set}, x);
+function doorDefs() {
+  return [
+    {label: 'Wand', type: 'select', options: Object.entries(WALLS), get: () => S.door.wall, set: v => { S.door.wall = v; }},
+    num('Abstand vom Wandanfang', () => S.door.offset, v => { S.door.offset = v; }, {unit: 'cm', min: 0, step: 5}),
+    num('Breite der Öffnung', () => S.door.width, v => { S.door.width = v; }, {unit: 'cm', min: 50, step: 5}),
+    {label: 'Flügel schiebt sich', type: 'select', options: [['start', 'zum Wandanfang'], ['end', 'zum Wandende']], get: () => S.door.slide, set: v => { S.door.slide = v; }},
+    num('Durchgang freihalten', () => S.door.clear, v => { S.door.clear = v; }, {unit: 'cm', min: 0, step: 10}),
+  ];
+}
 function buildRoomTab() {
-  const R = S.room, D = S.door;
-  const num = (label, obj, k, o) => Object.assign({label, type: 'number', get: () => obj()[k], set: v => { obj()[k] = v; }}, o);
   $('#tab-room').innerHTML = formHTML([
     {h3: 'Raummaße (Innenmaß)'},
-    num('Breite (links–rechts)', () => S.room, 'w', {unit: 'cm', min: 100, step: 5, room: true}),
-    num('Länge (oben–unten)', () => S.room, 'l', {unit: 'cm', min: 100, step: 5, room: true}),
-    num('Raumhöhe', () => S.room, 'h', {unit: 'cm', min: 0, step: 5}),
-    num('Zul. Bodenlast', () => S.room, 'floorLimit', {unit: 'kg/m²', min: 0, step: 50}),
-    {h3: 'Tür'},
-    {label: 'Wand', type: 'select', options: Object.entries(WALLS), get: () => S.door.wall, set: v => { S.door.wall = v; }},
-    num('Abstand vom Wandanfang', () => S.door, 'offset', {unit: 'cm', min: 0, step: 5}),
-    num('Türbreite', () => S.door, 'width', {unit: 'cm', min: 50, step: 5}),
-    {label: 'Türband', type: 'select', options: [['start', 'am Wandanfang'], ['end', 'am Wandende']], get: () => S.door.hinge, set: v => { S.door.hinge = v; }},
+    num('Breite (links–rechts)', () => S.room.w, v => { S.room.w = v; }, {unit: 'cm', min: 100, step: 5, room: true}),
+    num('Länge (oben–unten)', () => S.room.l, v => { S.room.l = v; }, {unit: 'cm', min: 100, step: 5, room: true}),
+    num('Raumhöhe', () => S.room.h, v => { S.room.h = v; }, {unit: 'cm', min: 0, step: 5}),
+    num('Zul. Bodenlast', () => S.room.floorLimit, v => { S.room.floorLimit = v; }, {unit: 'kg/m²', min: 0, step: 50}),
+    {h3: 'Schiebetür'},
+    ...doorDefs(),
     {html: '<div class="muted" style="font-size:12px">Wandanfang: Nord/Süd = links, West/Ost = oben. Die Tür kann auch im Plan verschoben werden.</div>'},
     {h3: 'Stützpfeiler'},
     {html: `<div class="btns"><button class="primary small" id="addPillar">+ Pfeiler</button></div><div class="list" id="pillarList"></div>`},
@@ -299,33 +448,37 @@ function buildObjectsTab() {
 }
 function renderObjList() {
   const el = $('#objList'); if (!el) return;
-  el.innerHTML = S.items.map(it => {
+  const row = (it, sub) => {
     const st = ST.items[it.id], bad = ST.bad.has(it.id);
     const cls = st.over || bad ? 'err' : (st.frontBlocked ? 'warn' : '');
-    return `<div class="li ${sel && sel.id === it.id ? 'sel' : ''}" data-sel="item:${it.id}"><span class="sw" style="background:${it.color}"></span>
-      <span class="nm">${esc(it.name)}</span><span class="chip ${cls}">${fmt(st.content)} kg</span></div>`;
-  }).join('') || '<div class="muted">Noch keine Objekte.</div>';
+    const where = sub ? `<small>${esc(cellLabel(findItem(it.parent.id), it.parent.f, it.parent.l).split(' · ').slice(1).join(' · '))}</small>` : '';
+    return `<div class="li ${sel && sel.id === it.id ? 'sel' : ''}" style="${sub ? 'margin-left:16px' : ''}" data-sel="item:${it.id}"><span class="sw" style="background:${it.color}"></span>
+      <span class="nm">${esc(it.name)}</span>${where}<span class="chip ${cls}">${fmt(st.content)} kg</span></div>`;
+  };
+  el.innerHTML = S.items.filter(i => !i.parent).map(it => row(it, false) + ST.items[it.id].kids.map(k => row(k, true)).join('')).join('') || '<div class="muted">Noch keine Objekte.</div>';
 }
 
 /* ---------- Übersicht ---------- */
+function contentRows(it, f, l) { return it.cells[f][l].c.filter(r => r.n || +r.kg || +r.q); }
 function reportHTML() {
   const T = ST.totals;
-  let h = '';
-  h += `<div class="kv"><span>Raumfläche</span><b>${fmt(T.rArea / 1e4)} m²</b><span>Belegte Stellfläche</span><b>${fmt(T.area / 1e4)} m² (${Math.round((1 - T.free) * 100)} %)</b><span>Lagergut gesamt</span><b>${fmt(T.content)} kg</b><span>Gesamtgewicht inkl. Möbel</span><b>${fmt(T.total)} kg</b></div>`;
+  let h = `<div class="kv"><span>Raumfläche</span><b>${fmt(T.rArea / 1e4)} m²</b><span>Belegte Stellfläche</span><b>${fmt(T.area / 1e4)} m² (${Math.round((1 - T.free) * 100)} %)</b><span>Lagergut gesamt</span><b>${fmt(T.content)} kg</b><span>Gesamtgewicht inkl. Möbel</span><b>${fmt(T.total)} kg</b></div>`;
   S.items.forEach(it => {
     const st = ST.items[it.id], rows = [];
-    it.cells.forEach((col, f) => col.forEach((c, l) => { if (c.t || +c.kg) rows.push([f, l, c]); }));
-    h += `<h2 style="font-size:13px;margin:10px 0 2px">${esc(it.name)} <small class="muted">${esc(TYPES[it.type].label)} · ${it.w}×${it.d}×${it.h} cm · ${fmt(st.content)} kg Inhalt</small></h2>`;
-    if (rows.length) {
-      h += `<table class="rep"><tr><th>Feld</th><th>Ebene</th><th>Inhalt</th><th>kg</th><th>max</th></tr>` +
-        rows.map(([f, l, c]) => `<tr><td>${f + 1}</td><td>${l + 1}</td><td>${esc(c.t)}</td><td class="n">${fmt(+c.kg || 0)}</td><td class="n">${fmt(cellMax(it, c))}</td></tr>`).join('') + '</table>';
-    } else h += '<div class="muted" style="font-size:12px">Keine Belegung eingetragen.</div>';
+    it.cells.forEach((col, f) => col.forEach((c, l) => {
+      contentRows(it, f, l).forEach(r => rows.push(`<tr><td>${f + 1}</td><td>${l + 1}</td><td>${esc(r.n)}</td><td class="n">${fmt(+r.q || 0)}</td><td class="n">${fmt(+r.kg || 0)}</td><td class="n">${fmt((+r.q || 0) * (+r.kg || 0))}</td></tr>`));
+      st.kids.filter(k => k.parent.f === f && k.parent.l === l).forEach(k => rows.push(`<tr><td>${f + 1}</td><td>${l + 1}</td><td>▣ ${esc(k.name)} (Kiste)</td><td class="n">1</td><td class="n">${fmt(ST.items[k.id].total)}</td><td class="n">${fmt(ST.items[k.id].total)}</td></tr>`));
+    }));
+    const loc = it.parent ? ` · in ${esc(cellLabel(findItem(it.parent.id), it.parent.f, it.parent.l))}` : '';
+    h += `<h2 style="font-size:13px;margin:10px 0 2px">${esc(it.name)} <small class="muted">${esc(TYPES[it.type].label)}${loc} · ${it.w}×${it.d}×${it.h} cm · ${fmt(st.content)} kg</small></h2>`;
+    if (rows.length) h += `<table class="rep"><tr><th>Feld</th><th>Ebene</th><th>Bezeichnung</th><th>Menge</th><th>kg/Stk</th><th>kg</th></tr>${rows.join('')}</table>`;
+    else h += '<div class="muted" style="font-size:12px">Keine Belegung eingetragen.</div>';
   });
   return h;
 }
 function renderReport() {
   const iss = ST.issues;
-  $('#tab-report').innerHTML = `<h3>Prüfung</h3>` + (iss.length ? iss.map(i => `<div class="issue ${i.sev}" data-sel="item:${i.id}">${esc(i.msg)}</div>`).join('') : '<div class="ok">✓ Keine Probleme gefunden.</div>') +
+  $('#tab-report').innerHTML = `<h3>Prüfung</h3>` + (iss.length ? iss.map(i => `<div class="issue ${i.sev}" ${i.id ? `data-sel="item:${i.id}"` : ''}>${esc(i.msg)}</div>`).join('') : '<div class="ok">✓ Keine Probleme gefunden.</div>') +
     `<h3>Belegung</h3>` + reportHTML();
 }
 function renderStatus() {
@@ -337,18 +490,48 @@ function renderStatus() {
 
 /* ---------- Inspektor ---------- */
 function bboxOf(it) { return bbox(footprint(it)); }
+function locOptions() {
+  const o = [['floor', 'Boden (frei im Raum)']];
+  S.items.filter(h => HOST_TYPES.includes(h.type) && !h.parent).forEach(h => h.cells.forEach((col, f) => col.forEach((c, l) => o.push([`${h.id}|${f}|${l}`, cellLabel(h, f, l)]))));
+  return o;
+}
+function cellBlock(it, f, l) {
+  const c = it.cells[f][l], key = `${it.id}:${f}:${l}`, tag = `${f}_${l}`;
+  const kids = ST.items[it.id].kids.filter(k => k.parent.f === f && k.parent.l === l);
+  OUT['cs' + tag] = () => { const s = ST.items[it.id].cells[f][l]; return `<span class="chip ${ratioClass(s.ratio)}">${fmt(s.load)} / ${fmt(s.max)} kg</span>`; };
+  BAR['cb' + tag] = () => ST.items[it.id].cells[f][l].ratio;
+  let rows = '';
+  c.c.forEach((r, i) => {
+    const iN = 'b' + (++bn), iQ = 'b' + (++bn), iK = 'b' + (++bn);
+    B[iN] = {type: 'text', get: () => r.n, set: v => { r.n = v; }};
+    B[iQ] = {type: 'number', get: () => r.q, set: v => { r.q = Math.max(0, v); }};
+    B[iK] = {type: 'number', get: () => r.kg, set: v => { r.kg = Math.max(0, v); }};
+    OUT[`rt${tag}_${i}`] = () => fmt((+r.q || 0) * (+r.kg || 0)) + ' kg';
+    rows += `<div class="crow"><input type="text" placeholder="Bezeichnung" data-b="${iN}"><button class="small danger" data-act="delc" data-c="${key}:${i}" title="Eintrag löschen">✕</button></div>
+      <div class="crow2"><input type="number" min="0" step="1" title="Menge" data-b="${iQ}"><span>Stk ×</span><input type="number" min="0" step="0.05" title="Gewicht je Stück (kg)" data-b="${iK}"><span>kg =</span><b data-o="rt${tag}_${i}"></b></div>`;
+  });
+  const iM = 'b' + (++bn);
+  B[iM] = {type: 'number', nullable: true, min: 0, get: () => c.max == null ? '' : c.max, set: v => { c.max = v; }};
+  const title = `${it.fields > 1 ? 'Feld ' + (f + 1) + ' · ' : ''}Ebene ${l + 1}`;
+  return `<details class="cd" data-cell="${key}" ${openCells.has(key) ? 'open' : ''}><summary><span>${title}</span><span data-o="cs${tag}"></span></summary>
+    <div class="bar" data-bar="cb${tag}"><i></i></div>
+    ${rows || '<div class="muted" style="font-size:12px;margin:4px 0">Noch kein Inhalt.</div>'}
+    <div class="btns"><button class="small" data-act="addc" data-c="${key}">+ Inhalt</button></div>
+    <div class="row"><label>Eigene Fachlast <span class="u">(kg)</span></label><input type="number" min="0" step="5" placeholder="Standard ${it.maxFach}" data-b="${iM}"></div>
+    ${kids.length ? `<div class="muted" style="font-size:12px">Kisten in diesem Fach:</div>` + kids.map(k => `<div class="li" data-sel="item:${k.id}"><span class="sw" style="background:${k.color}"></span><span class="nm">${esc(k.name)}</span><span class="chip">${fmt(ST.items[k.id].total)} kg</span></div>`).join('') : ''}
+  </details>`;
+}
 function buildInspector() {
   const el = $('#right'); OUT = {}; BAR = {};
   const o = findSel();
   if (!o) {
     el.innerHTML = `<div class="pad"><h3>Eigenschaften</h3><p class="muted">Ein Objekt im Plan oder in der Liste anklicken, um Position, Maße, Fach- und Feldlasten und den Inhalt zu bearbeiten.</p>
-      <p class="muted">Neue Objekte über den Reiter <b>Objekte</b> hinzufügen.</p></div>`;
+      <p class="muted">Neue Objekte über den Reiter <b>Objekte</b> hinzufügen. Kisten lassen sich in der 3D-Ansicht in Fächer ziehen oder bei der Kiste unter „Standort“ wählen.</p></div>`;
     return;
   }
-  const num = (label, get, set, x) => Object.assign({label, type: 'number', get, set}, x);
   if (sel.kind === 'door') {
-    el.innerHTML = `<div class="pad"><h3>Tür</h3><p class="muted">Tür-Einstellungen im Reiter „Raum“ oder per Ziehen im Plan.</p><div class="btns"><button data-go="room">Zum Reiter Raum</button></div></div>`;
-    return;
+    el.innerHTML = `<div class="pad">${formHTML([{h3: 'Schiebetür'}, ...doorDefs()])}</div>`;
+    syncForms(); return;
   }
   if (sel.kind === 'pillar') {
     el.innerHTML = `<div class="pad">${formHTML([{h3: 'Stützpfeiler'},
@@ -359,62 +542,69 @@ function buildInspector() {
     ])}<div class="btns"><button class="danger" data-act="del">Löschen</button></div></div>`;
     syncForms(); return;
   }
-  const it = o, T = TYPES[it.type];
+  const it = o, T = TYPES[it.type], placed = !!it.parent;
   const setEdge = (axis, v) => { const bb = bboxOf(it); if (axis === 'x') it.x += v - bb.minX; else it.y += v - bb.minY; };
   const defs = [
     {h3: T.label},
     {label: 'Bezeichnung', type: 'text', get: () => it.name, set: v => { it.name = v; }},
     {label: 'Farbe', type: 'color', get: () => it.color, set: v => { it.color = v; }},
-    {h3: 'Position'},
-    num('Abstand zur linken Wand', () => r1(bboxOf(it).minX), v => setEdge('x', v), {unit: 'cm', step: 1}),
-    num('Abstand zur oberen Wand', () => r1(bboxOf(it).minY), v => setEdge('y', v), {unit: 'cm', step: 1}),
-    num('Drehung', () => it.rot, v => { it.rot = ((v % 360) + 360) % 360; }, {unit: '°', step: 15}),
-    {html: `<div class="muted" style="font-size:12px">Abstand rechts <b data-o="r"></b> · unten <b data-o="b"></b> (Front = dicke Kante)</div><div class="btns"><button data-act="rot">⟳ 90° drehen</button></div>`},
+  ];
+  if (it.type === 'kiste') {
+    defs.push({h3: 'Standort'},
+      {label: 'Standort', type: 'select', options: locOptions(), rebuild: true,
+        get: () => placed ? `${it.parent.id}|${it.parent.f}|${it.parent.l}` : 'floor', set: v => setLocation(it, v)});
+  }
+  if (placed) {
+    const g = () => { const h = findItem(it.parent.id); return cellGeom(h, it.parent.f, it.parent.l); };
+    defs.push(
+      num('Abstand von links im Fach', () => r1(it.parent.x), v => { it.parent.x = v; }, {unit: 'cm', step: 1}),
+      num('Abstand von hinten im Fach', () => r1(it.parent.z), v => { it.parent.z = v; }, {unit: 'cm', step: 1}),
+      {label: 'Ausrichtung', type: 'select', options: [[0, 'längs (Breite = links–rechts)'], [90, 'quer gedreht']], get: () => it.parent.rot, set: v => { it.parent.rot = +v; autoFit(it); }, rebuild: true},
+      {html: `<div class="muted" style="font-size:12px">Nutzraum im Fach: <b data-o="cg"></b></div>`});
+    OUT.cg = () => { const q = g(); return `${fmt(q.iw)} × ${fmt(q.id)} × ${q.ch > 900 ? '∞' : fmt(q.ch)} cm`; };
+  } else {
+    defs.push({h3: 'Position'},
+      num('Abstand zur linken Wand', () => r1(bboxOf(it).minX), v => setEdge('x', v), {unit: 'cm', step: 1}),
+      num('Abstand zur oberen Wand', () => r1(bboxOf(it).minY), v => setEdge('y', v), {unit: 'cm', step: 1}),
+      num('Drehung', () => it.rot, v => { it.rot = ((v % 360) + 360) % 360; }, {unit: '°', step: 15}),
+      {html: `<div class="muted" style="font-size:12px">Abstand rechts <b data-o="r"></b> · unten <b data-o="b"></b> (Front = dicke Kante)</div>`});
+    OUT.r = () => fmt(S.room.w - bboxOf(it).maxX) + ' cm';
+    OUT.b = () => fmt(S.room.l - bboxOf(it).maxY) + ' cm';
+  }
+  defs.push({html: `<div class="btns"><button data-act="rot">⟳ 90° drehen</button></div>`},
     {h3: 'Maße'},
     num('Breite', () => it.w, v => { it.w = v; }, {unit: 'cm', min: 5, step: 5}),
     num('Tiefe', () => it.d, v => { it.d = v; }, {unit: 'cm', min: 5, step: 5}),
-    num('Höhe', () => it.h, v => { it.h = v; }, {unit: 'cm', min: 5, step: 5}),
-  ];
-  if (it.type === 'schrank') defs.push({label: 'Flügeltüren', type: 'select', options: [[2, '2 Türen'], [1, '1 Tür']], get: () => it.doors, set: v => { it.doors = +v; }});
-  else defs.push(num('Freiraum vorne', () => it.clearance, v => { it.clearance = v; }, {unit: 'cm', min: 0, step: 5}));
-  defs.push({h3: 'Aufbau & Lastgrenzen'},
-    num('Felder (nebeneinander)', () => it.fields, v => { it.fields = Math.round(v); makeCells(it); }, {min: 1, max: 8, rebuild: true}),
-    num('Ebenen/Fächer je Feld', () => it.levels, v => { it.levels = Math.round(v); makeCells(it); }, {min: 1, max: 12, rebuild: true}),
-    num('Fachlast max.', () => it.maxFach, v => { it.maxFach = v; }, {unit: 'kg', min: 0, step: 5}),
-    num('Feldlast max.', () => it.maxFeld, v => { it.maxFeld = v; }, {unit: 'kg', min: 0, step: 10}),
-    num('Eigengewicht', () => it.empty, v => { it.empty = v; }, {unit: 'kg', min: 0, step: 5}),
-    {html: `<div class="kv"><span>Gewicht gesamt</span><b data-o="tot"></b><span>Bodenbelastung</span><b data-o="pr"></b></div>`},
-    {h3: 'Belegung (Inhalt · Gewicht · eigene Fachlast)'});
-  // Zellen
-  let cells = `<div class="cellgrid" style="grid-template-columns:repeat(${it.fields},minmax(0,1fr))">`;
-  for (let l = it.levels - 1; l >= 0; l--) {
-    for (let f = 0; f < it.fields; f++) {
-      const c = it.cells[f][l];
-      const idT = 'b' + (++bn), idK = 'b' + (++bn), idM = 'b' + (++bn);
-      B[idT] = {type: 'text', get: () => c.t, set: v => { c.t = v; }};
-      B[idK] = {type: 'number', get: () => c.kg, set: v => { c.kg = Math.max(0, v); }};
-      B[idM] = {type: 'number', get: () => c.max == null ? '' : c.max, set: v => { c.max = v; }};
-      const bid = `c${f}_${l}`; BAR[bid] = () => (+c.kg || 0) / (cellMax(it, c) || 1);
-      cells += `<div class="cell"><div class="lv">${it.fields > 1 ? `Feld ${f + 1} · ` : ''}Ebene ${l + 1}</div>
-        <input type="text" placeholder="Inhalt" data-b="${idT}"><div class="nums">
-        <input type="number" min="0" step="1" title="Gewicht (kg)" placeholder="kg" data-b="${idK}">
-        <input type="number" min="0" step="5" title="Fachlast max. (leer = Standard)" placeholder="max ${it.maxFach}" data-b="${idM}"></div>
-        <div class="bar" data-bar="${bid}"><i></i></div></div>`;
-    }
+    num('Höhe', () => it.h, v => { it.h = v; }, {unit: 'cm', min: 5, step: 5}));
+  if (!placed) {
+    if (it.type === 'schrank') defs.push({label: 'Flügeltüren', type: 'select', options: [[2, '2 Türen'], [1, '1 Tür']], get: () => it.doors, set: v => { it.doors = +v; }});
+    else defs.push(num('Freiraum vorne', () => it.clearance, v => { it.clearance = v; }, {unit: 'cm', min: 0, step: 5}));
   }
-  cells += '</div><div id="fsums"></div>';
+  defs.push({h3: 'Aufbau & Lastgrenzen'});
+  if (HOST_TYPES.includes(it.type) && it.type !== 'tisch') {
+    defs.push(
+      num('Felder (nebeneinander)', () => it.fields, v => { it.fields = Math.round(v); makeCells(it); }, {min: 1, max: 8, rebuild: true}),
+      num('Ebenen/Fächer je Feld', () => it.levels, v => { it.levels = Math.round(v); makeCells(it); }, {min: 1, max: 12, rebuild: true}));
+  }
+  const isBox = it.type === 'kiste' || it.type === 'tisch';
+  defs.push(
+    num(isBox ? 'Max. Beladung' : 'Fachlast max.', () => it.maxFach, v => { it.maxFach = v; if (isBox) it.maxFeld = v; }, {unit: 'kg', min: 0, step: 5}),
+    ...(isBox ? [] : [num('Feldlast max.', () => it.maxFeld, v => { it.maxFeld = v; }, {unit: 'kg', min: 0, step: 10})]),
+    num('Eigengewicht', () => it.empty, v => { it.empty = v; }, {unit: 'kg', min: 0, step: 1}),
+    {html: `<div class="kv"><span>Gewicht gesamt</span><b data-o="tot"></b>${placed ? '' : '<span>Bodenbelastung</span><b data-o="pr"></b>'}</div>`});
+  OUT.tot = () => fmt(ST.items[it.id].total) + ' kg';
+  OUT.pr = () => { const p = ST.items[it.id].pressure || 0; return `<span class="${p > S.room.floorLimit && S.room.floorLimit ? 'chip err' : ''}">${fmt(p)} kg/m²</span>`; };
+  defs.push({h3: 'Inhalt (Bezeichnung · Menge · Gewicht)'});
+  let cells = `<div class="cells">`;
+  for (let l = it.levels - 1; l >= 0; l--) for (let f = 0; f < it.fields; f++) cells += cellBlock(it, f, l);
+  cells += `</div><div id="fsums" data-o="fsums"></div>`;
+  OUT.fsums = () => ST.items[it.id].fieldSum.length > 1 ? ST.items[it.id].fieldSum.map((s, f) => `<div class="fieldsum">Feld ${f + 1}: <b class="${s > it.maxFeld ? 'chip err' : ''}">${fmt(s)} / ${fmt(it.maxFeld)} kg</b> Feldlast</div>`).join('') : '';
   defs.push({html: cells});
   el.innerHTML = `<div class="pad">${formHTML(defs)}<div class="btns"><button data-act="dup">Duplizieren</button><button class="danger" data-act="del">Löschen</button></div></div>`;
-  OUT.r = () => fmt(R_.w - bboxOf(it).maxX) + ' cm';
-  OUT.b = () => fmt(R_.l - bboxOf(it).maxY) + ' cm';
-  OUT.tot = () => fmt(ST.items[it.id].total) + ' kg';
-  OUT.pr = () => { const p = ST.items[it.id].pressure; return `<span class="${p > S.room.floorLimit && S.room.floorLimit ? 'chip err' : ''}">${fmt(p)} kg/m²</span>`; };
-  OUT.fsums = () => ST.items[it.id].fieldSum.map((s, f) => `<div class="fieldsum">Feld ${f + 1}: <b class="${s > it.maxFeld ? 'chip err' : ''}">${fmt(s)} / ${fmt(it.maxFeld)} kg</b> Feldlast</div>`).join('');
   syncForms();
 }
-const R_ = new Proxy({}, {get: (_, k) => S.room[k]});
 
-/* ---------- Plan zeichnen ---------- */
+/* ---------- Plan zeichnen (2D) ---------- */
 const svg = $('#plan');
 function arcPath(it) { /* Türschwenk der Schränke (lokal) */
   const w = it.w, d = it.d, hd = d / 2;
@@ -447,27 +637,32 @@ function itemSVG(it) {
   // Beschriftung: läuft entlang der Breite, bleibt aber lesbar (nie auf dem Kopf)
   let r = ((it.rot % 180) + 180) % 180; if (r > 90) r -= 180;
   const fs = Math.max(4.5, Math.min(11, (w * 0.92) / (Math.max(it.name.length, 8) * 0.55)));
-  const l2 = `${fmt(st.content)} / ${fmt(it.fields * Math.min(it.levels * it.maxFach, it.maxFeld))} kg`;
+  const nk = st.kids.length;
+  const l2 = `${fmt(st.content)} / ${fmt(it.fields * Math.min(it.levels * it.maxFach, it.maxFeld))} kg${nk ? ` · ${nk}▣` : ''}`;
   g += `<g transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${r})"><text class="lbl" y="${r1(-fs * 0.45)}" font-size="${r1(fs)}">${esc(it.name)}</text><text class="lbl l2" y="${r1(fs * 0.75)}" font-size="${r1(fs * 0.8)}">${esc(l2)}</text></g>`;
   return g;
 }
+const polyPts = p => p.map(q => r1(q[0]) + ',' + r1(q[1])).join(' ');
 function zonesSVG() {
   let z = '';
+  if (!opt.zones) return z;
   const dg = doorGeom();
-  if (opt.zones) {
-    z += `<path class="doorarc" d="M${dg.H[0]} ${dg.H[1]}L${dg.F[0]} ${dg.F[1]}A${S.door.width} ${S.door.width} 0 0 ${dg.sweep} ${dg.T[0]} ${dg.T[1]}Z"/>`;
-    S.items.forEach(it => {
-      const fz = frontZone(it); if (!fz) return;
-      const blocked = ST.items[it.id].frontBlocked;
-      if (it.type === 'schrank') z += `<path class="zone ${blocked ? 'bad' : ''}" transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${it.rot})" d="${arcPath(it)}"/>`;
-      else z += `<polygon class="zone ${blocked ? 'bad' : ''}" points="${fz.map(p => r1(p[0]) + ',' + r1(p[1])).join(' ')}"/>`;
-    });
-  }
+  z += `<polygon class="zone ${ST.issues.some(i => i.msg.endsWith('Durchgang an der Tür')) ? 'bad' : ''}" points="${polyPts(dg.zone)}"/>`;
+  S.items.filter(i => !i.parent).forEach(it => {
+    const fz = frontZone(it); if (!fz) return;
+    const blocked = ST.items[it.id].frontBlocked;
+    if (it.type === 'schrank') z += `<path class="zone ${blocked ? 'bad' : ''}" transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${it.rot})" d="${arcPath(it)}"/>`;
+    else z += `<polygon class="zone ${blocked ? 'bad' : ''}" points="${polyPts(fz)}"/>`;
+  });
   return z;
 }
+function selBB() {
+  const o = findSel(); if (!o || sel.kind === 'door') return null;
+  if (sel.kind === 'item') return bboxOf(o.parent ? topOf(o) : o);
+  return bbox(pillarPoly(o));
+}
 function dimsSVG() {
-  const o = findSel(); if (!o || !opt.dims || sel.kind === 'door') return '';
-  const bb = sel.kind === 'item' ? bboxOf(o) : bbox(pillarPoly(o));
+  const bb = selBB(); if (!bb || !opt.dims) return '';
   const R = S.room, cx = (bb.minX + bb.maxX) / 2, cy = (bb.minY + bb.maxY) / 2;
   let s = '';
   const seg = (x1, y1, x2, y2, v) => { if (v < 0.5) return; s += `<line class="dimline" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><text class="dimtxt" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2}">${fmt(v)}</text>`; };
@@ -482,23 +677,21 @@ function renderPlan() {
   h += `<rect class="floor" x="0" y="0" width="${R.w}" height="${R.l}"/><rect x="0" y="0" width="${R.w}" height="${R.l}" fill="url(#g100)" pointer-events="none"/>`;
   h += zonesSVG();
   S.pillars.forEach(p => h += `<rect class="pillar" data-kind="pillar" data-id="${p.id}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.d}"/>`);
-  S.items.forEach(it => h += itemSVG(it));
+  S.items.filter(i => !i.parent).forEach(it => h += itemSVG(it));
   h += `<rect class="wall" x="-6" y="-6" width="${R.w + 12}" height="${R.l + 12}"/>`;
   h += `<line class="doorgap" x1="${dg.A[0]}" y1="${dg.A[1]}" x2="${dg.B[0]}" y2="${dg.B[1]}"/>`;
-  h += `<line class="doorleaf" data-kind="door" data-id="door" x1="${dg.H[0]}" y1="${dg.H[1]}" x2="${dg.T[0]}" y2="${dg.T[1]}" style="stroke-linecap:round"/>`;
+  h += `<line class="doorclosed" x1="${dg.A[0]}" y1="${dg.A[1]}" x2="${dg.B[0]}" y2="${dg.B[1]}"/>`;
+  h += `<polygon class="doorleaf" data-kind="door" data-id="door" points="${polyPts(dg.leaf)}"/>`;
   h += `<line data-kind="door" data-id="door" x1="${dg.A[0]}" y1="${dg.A[1]}" x2="${dg.B[0]}" y2="${dg.B[1]}" stroke="transparent" stroke-width="22"/>`;
   h += `<text class="roomdim" x="${R.w / 2}" y="-18">${fmt(R.w)} cm</text><text class="roomdim" transform="translate(-18 ${R.l / 2}) rotate(-90)">${fmt(R.l)} cm</text>`;
-  const o = findSel();
-  if (o && sel.kind !== 'door') {
-    const bb = sel.kind === 'item' ? bboxOf(o) : bbox(pillarPoly(o));
-    h += `<rect class="selbox" x="${bb.minX - 3}" y="${bb.minY - 3}" width="${bb.maxX - bb.minX + 6}" height="${bb.maxY - bb.minY + 6}"/>`;
-  }
+  const bb = selBB();
+  if (bb) h += `<rect class="selbox" x="${bb.minX - 3}" y="${bb.minY - 3}" width="${bb.maxX - bb.minX + 6}" height="${bb.maxY - bb.minY + 6}"/>`;
   h += dimsSVG();
   svg.innerHTML = h;
   svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
 }
 
-/* ---------- Interaktion ---------- */
+/* ---------- Interaktion (2D) ---------- */
 function svgPt(e) {
   const m = svg.getScreenCTM().inverse(), p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
   return [p.x, p.y];
@@ -507,7 +700,7 @@ function snapDelta(bb, ignoreId, thr) {
   const R = S.room, g = opt.grid;
   const tx = [0, R.w], ty = [0, R.l];
   const addBB = b => { tx.push(b.minX, b.maxX); ty.push(b.minY, b.maxY); };
-  S.items.forEach(i => { if (i.id !== ignoreId) addBB(bboxOf(i)); });
+  S.items.forEach(i => { if (i.id !== ignoreId && !i.parent) addBB(bboxOf(i)); });
   S.pillars.forEach(p => { if (p.id !== ignoreId) addBB(bbox(pillarPoly(p))); });
   const axis = (e0, e1, targets) => {
     let best = null;
@@ -525,13 +718,13 @@ svg.addEventListener('pointerdown', e => {
   if (t) {
     const kind = t.dataset.kind, id = t.dataset.id;
     const changedSel = !sel || sel.kind !== kind || sel.id !== id;
-    sel = {kind, id};
+    sel = {kind, id}; if (changedSel) selCell = null;
     const o = findSel();
-    drag = {mode: 'move', kind, id, p0: p, o0: kind === 'item' ? [o.x, o.y] : kind === 'pillar' ? [o.x, o.y] : null, moved: false, rebuild: changedSel};
-    if (changedSel) { refresh({rebuild: true}); }
+    drag = {mode: 'move', kind, id, p0: p, o0: kind === 'door' ? null : [o.x, o.y], moved: false};
+    if (changedSel) refresh({rebuild: true});
   } else {
     drag = {mode: 'pan', px: e.clientX, py: e.clientY, v0: {...view}, a: svg.getScreenCTM().a, moved: false};
-    if (sel) { sel = null; refresh({rebuild: true}); }
+    if (sel) { sel = null; selCell = null; refresh({rebuild: true}); }
   }
   svg.classList.add('dragging');
 });
@@ -546,22 +739,28 @@ svg.addEventListener('pointermove', e => {
   drag.moved = true;
   const R = S.room;
   if (drag.kind === 'door') {
-    const D = S.door, pt = p;
-    const dist = {N: pt[1], S: R.l - pt[1], W: pt[0], E: R.w - pt[0]};
-    const wall = Object.keys(dist).sort((a, b) => dist[a] - dist[b])[0];
-    const along = (wall === 'N' || wall === 'S') ? pt[0] : pt[1], len = (wall === 'N' || wall === 'S') ? R.w : R.l;
-    D.wall = wall; D.offset = Math.round(Math.max(0, Math.min(len - D.width, along - D.width / 2)) / 5) * 5;
+    dragDoor(p);
   } else {
     const o = findSel(); if (!o) return;
-    o.x = drag.o0[0] + dx; o.y = drag.o0[1] + dy;
-    if (!e.altKey) {
-      const bb = drag.kind === 'item' ? bboxOf(o) : bbox(pillarPoly(o));
-      const [sx, sy] = snapDelta(bb, o.id, 6); o.x += sx; o.y += sy;
-    }
-    o.x = r1(o.x); o.y = r1(o.y);
+    moveTo(o, drag.kind, drag.o0[0] + dx, drag.o0[1] + dy, e.altKey);
   }
   refresh({});
 });
+function dragDoor(pt) {
+  const R = S.room, D = S.door;
+  const dist = {N: pt[1], S: R.l - pt[1], W: pt[0], E: R.w - pt[0]};
+  const wall = Object.keys(dist).sort((x, y) => dist[x] - dist[y])[0];
+  const along = (wall === 'N' || wall === 'S') ? pt[0] : pt[1], len = (wall === 'N' || wall === 'S') ? R.w : R.l;
+  D.wall = wall; D.offset = Math.round(Math.max(0, Math.min(len - D.width, along - D.width / 2)) / 5) * 5;
+}
+function moveTo(o, kind, x, y, noSnap) {
+  o.x = x; o.y = y;
+  if (!noSnap) {
+    const bb = kind === 'item' ? bboxOf(o) : bbox(pillarPoly(o));
+    const [sx, sy] = snapDelta(bb, o.id, 6); o.x += sx; o.y += sy;
+  }
+  o.x = r1(o.x); o.y = r1(o.y);
+}
 function endDrag() {
   if (!drag) return;
   if (drag.mode === 'move' && drag.moved) commit();
@@ -577,17 +776,31 @@ function zoom(f, cx, cy) {
 }
 svg.addEventListener('wheel', e => { e.preventDefault(); const p = svgPt(e); zoom(e.deltaY > 0 ? 1.12 : 1 / 1.12, p[0], p[1]); }, {passive: false});
 function fit() {
+  if (mode === '3d') { if (window.fit3D) fit3D(); return; }
   const R = S.room, m = 70, r = svg.clientWidth / Math.max(1, svg.clientHeight) || 1.4;
   let w = R.w + 2 * m, h = R.l + 2 * m;
   if (w / h < r) w = h * r; else h = w / r;
   view = {x: R.w / 2 - w / 2, y: R.l / 2 - h / 2, w, h};
   svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
 }
-$('#zoomIn').onclick = () => zoom(1 / 1.25); $('#zoomOut').onclick = () => zoom(1.25); $('#fit').onclick = fit;
+$('#zoomIn').onclick = () => mode === '3d' ? zoom3D(1 / 1.25) : zoom(1 / 1.25);
+$('#zoomOut').onclick = () => mode === '3d' ? zoom3D(1.25) : zoom(1.25);
+$('#fit').onclick = fit;
 $('#grid').onchange = e => { opt.grid = +e.target.value; };
 $('#zones').onchange = e => { opt.zones = e.target.checked; renderPlan(); };
 $('#dims').onchange = e => { opt.dims = e.target.checked; renderPlan(); };
-$('#heat').onchange = e => { opt.heat = e.target.checked; renderPlan(); };
+$('#heat').onchange = e => { opt.heat = e.target.checked; refresh({}); };
+
+/* Umschalten 2D/3D */
+function setMode(m) {
+  if (m === '3d' && !window.THREE) { alert('3D-Ansicht nicht verfügbar (three.js konnte nicht geladen werden).'); return; }
+  mode = m;
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  document.body.classList.toggle('m3d', m === '3d');
+  svg.toggleAttribute('hidden', m === '3d'); $('#gl').hidden = m !== '3d';
+  if (m === '3d') { init3D(); render3D(); fit3D(); } else { renderPlan(); fit(); }
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 
 /* Klicks auf Listen/Tabs/Inspector */
 document.addEventListener('click', e => {
@@ -598,15 +811,16 @@ document.addEventListener('click', e => {
   const g = e.target.closest('[data-go]'); if (g) { showTab(g.dataset.go); return; }
   const act = e.target.closest('[data-act]');
   if (act) {
-    if (act.dataset.act === 'del') delSel();
-    else if (act.dataset.act === 'dup') dupSel();
-    else if (act.dataset.act === 'rot') rotSel();
+    const k = act.dataset.act;
+    if (k === 'del') delSel(); else if (k === 'dup') dupSel(); else if (k === 'rot') rotSel();
+    else if (k === 'addc' || k === 'delc') {
+      const parts = act.dataset.c.split(':'), it = findItem(parts[0]); if (!it) return;
+      const f = +parts[1], l = +parts[2], c = it.cells[f][l];
+      if (k === 'addc') c.c.push({n: '', q: 1, kg: 0}); else c.c.splice(+parts[3], 1);
+      openCells.add(`${it.id}:${f}:${l}`); commit(); refresh({rebuild: true});
+    }
   }
 });
-function rotSel() {
-  const o = findSel(); if (!o || sel.kind !== 'item') return;
-  o.rot = (o.rot + 90) % 360; commit(); refresh({});
-}
 function showTab(name) {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   document.querySelectorAll('.tab').forEach(t => t.hidden = t.id !== 'tab-' + name);
@@ -620,15 +834,15 @@ document.addEventListener('keydown', e => {
   }
   if (typing) return;
   const o = findSel();
-  if (e.key === 'Escape') { sel = null; refresh({rebuild: true}); }
+  if (e.key === 'Escape') { sel = null; selCell = null; refresh({rebuild: true}); }
   else if (!o) return;
   else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); delSel(); }
   else if (e.key === 'r' || e.key === 'R') rotSel();
   else if (e.key.startsWith('Arrow') && sel.kind !== 'door') {
     e.preventDefault();
     const st = (e.shiftKey ? 10 : 1) * (opt.grid || 1);
-    if (e.key === 'ArrowLeft') o.x -= st; if (e.key === 'ArrowRight') o.x += st;
-    if (e.key === 'ArrowUp') o.y -= st; if (e.key === 'ArrowDown') o.y += st;
+    const dx = e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, dy = e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0;
+    if (o.parent) { o.parent.x += dx; o.parent.z += dy; } else { o.x += dx; o.y += dy; }
     commit(); refresh({});
   }
 });
@@ -641,14 +855,14 @@ $('#export').onclick = () => {
   a.download = 'seg-lager-plan.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
 $('#import').onclick = () => $('#file').click();
+function importText(t) {
+  const s = JSON.parse(t);
+  if (!s.room || !Array.isArray(s.items)) throw new Error('format');
+  S = normalizeState(s); sel = null; commit(); buildRoomTab(); fit(); refresh({rebuild: true, room: true});
+}
 $('#file').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
-  f.text().then(t => {
-    const s = JSON.parse(t);
-    if (!s.room || !Array.isArray(s.items) || !s.door) throw new Error('format');
-    s.pillars = s.pillars || []; s.items.forEach(i => { i.id = i.id || uid(); makeCells(i); });
-    S = s; sel = null; commit(); buildRoomTab(); fit(); refresh({rebuild: true, room: true});
-  }).catch(() => alert('Datei konnte nicht gelesen werden.')).finally(() => { e.target.value = ''; });
+  f.text().then(importText).catch(() => alert('Datei konnte nicht gelesen werden.')).finally(() => { e.target.value = ''; });
 };
 $('#reset').onclick = () => {
   const c = confirm('Plan zurücksetzen?\nOK = Beispielplan laden · Abbrechen = nichts ändern');
@@ -658,9 +872,10 @@ $('#reset').onclick = () => {
   sel = null; commit(); buildRoomTab(); fit(); refresh({rebuild: true, room: true});
 };
 $('#print').onclick = () => {
+  renderPlan();
   const c = svg.cloneNode(true);
   c.querySelectorAll('.selbox,.dimline,.dimtxt').forEach(n => n.remove());
-  c.removeAttribute('id'); c.setAttribute('viewBox', `${-40} ${-40} ${S.room.w + 80} ${S.room.l + 80}`);
+  c.removeAttribute('id'); c.removeAttribute('hidden'); c.setAttribute('viewBox', `${-40} ${-40} ${S.room.w + 80} ${S.room.l + 80}`);
   $('#printReport').innerHTML = `<h1>SEG-Lager – BRK Bereitschaft Erding</h1><div>${new Date().toLocaleDateString('de-DE')} · Raum ${fmt(S.room.w)} × ${fmt(S.room.l)} cm</div>${c.outerHTML}<h2>Prüfung</h2>` +
     (ST.issues.length ? '<ul>' + ST.issues.map(i => `<li>${esc(i.msg)}</li>`).join('') + '</ul>' : '<p>Keine Probleme.</p>') + '<h2>Belegung</h2>' + reportHTML();
   window.print();
@@ -670,9 +885,11 @@ $('#print').onclick = () => {
 let saveT = null;
 function refresh(o) {
   ST = analyze();
-  renderPlan(); renderObjList(); renderReport(); renderStatus(); renderPillarList();
-  if (o.rebuild) buildInspector(); else syncForms();
-  if (o.room) { syncForms(); }
+  if (mode === '2d') renderPlan();
+  renderObjList(); renderReport(); renderStatus(); renderPillarList();
+  if (o.rebuild) buildInspector();
+  syncForms();
+  if (mode === '3d' && window.render3D) render3D();
   $('#undo').disabled = hIdx === 0; $('#redo').disabled = hIdx >= hist.length - 1;
   clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch (e) {} }, 300);
 }
@@ -680,4 +897,4 @@ function refresh(o) {
 buildRoomTab(); buildObjectsTab();
 ST = analyze();
 fit(); refresh({rebuild: true, room: true});
-window.addEventListener('resize', () => { if (!drag) fit(); });
+window.addEventListener('resize', () => { if (!drag && mode === '2d') fit(); });

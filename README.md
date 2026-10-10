@@ -1,11 +1,13 @@
 # SEG-Lager Planer – BRK Bereitschaft Erding
 
-Statische Web-App (kein Build nötig): `index.html` im Browser öffnen.
+Statische Web-App (kein Build nötig): `index.html` im Browser öffnen. three.js liegt unter `vendor/`, die App läuft komplett offline.
 
-- Raum mit Maßen, Tür (Schwenkbereich) und Stützpfeilern; alles per Formular oder Ziehen anpassbar
+- Raum mit Maßen, **Schiebetür** (Öffnung, Schieberichtung, Laufweg, freizuhaltender Durchgang) und Stützpfeilern
 - Objekte: Metallschrank (Flügeltüren), Schwerlastregal, Rollwagen, Kiste, Tisch
-- Pro Objekt: Position, Drehung, Maße, Felder × Ebenen, Fachlast, Feldlast, Eigengewicht, Inhalt je Fach (eigene Fachlast möglich)
-- Prüfung: Fach-/Feldlast, Bodenbelastung, Kollisionen, blockierte Türen/Freiräume
+- **2D-Grundriss und 3D-Ansicht** (Umschalter oben im Plan): Ebenen/Fächer sichtbar, Kisten per Ziehen in Fächer stellen, verschieben, Fächer wechseln; alternativ bei der Kiste unter „Standort“ wählen
+- Pro Objekt: Position, Drehung, Maße, Felder × Ebenen, Fachlast, Feldlast, Eigengewicht
+- **Inhalt für jedes Objekt/Fach**: Bezeichnung, Menge, Gewicht je Stück (Summe wird berechnet); eingestellte Kisten zählen zur Fach-/Feldlast des Wirts
+- Prüfung: Fach-/Feldlast, Bodenbelastung, Kollisionen, passt die Kiste ins Fach, blockierte Türen/Freiräume
 - Autosave (localStorage), Undo/Redo, JSON-Export/-Import, Druckansicht mit Packliste
 
 Die Raummaße im Beispielplan (900 × 600 cm) sind Platzhalter.

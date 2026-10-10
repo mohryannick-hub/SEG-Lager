@@ -71,7 +71,8 @@ input:focus,select:focus{outline:2px solid #f3a0ab;border-color:var(--accent)}
 .g-major{fill:none;stroke:#cfd3d9;stroke-width:.7}
 .wall{fill:none;stroke:var(--wall);stroke-width:12}
 .doorgap{stroke:#e9ecef;stroke-width:14}
-.doorleaf{stroke:#8a5a2b;stroke-width:3;fill:none}
+.doorleaf{fill:#8a5a2b;stroke:#4d2f12;stroke-width:.8}
+.doorclosed{stroke:#8a5a2b;stroke-width:1.6;stroke-dasharray:5 3;fill:none}
 .doorarc{fill:rgba(224,138,0,.12);stroke:#e08a00;stroke-width:.8;stroke-dasharray:4 3}
 .zone{fill:rgba(224,138,0,.14);stroke:#e08a00;stroke-width:.8;stroke-dasharray:4 3}
 .zone.bad{fill:rgba(211,47,47,.2);stroke:var(--red)}
@@ -105,6 +106,23 @@ table.rep{width:100%;border-collapse:collapse;font-size:12.5px;margin:4px 0 12px
 table.rep th,table.rep td{border:1px solid var(--line);padding:3px 6px;text-align:left}
 table.rep th{background:#f0f2f5}
 table.rep td.n{text-align:right;white-space:nowrap}
+.seg{display:inline-flex}
+.seg button{border-radius:0}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:0}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.only3d{display:none;align-items:center;gap:10px;flex-wrap:wrap}
+.m3d .only3d{display:flex}.m3d .only2d{display:none}
+#gl{flex:1;min-height:300px;width:100%;touch-action:none;display:block;background:#e9ecef}
+#gl[hidden],#plan[hidden]{display:none}
+.stage{position:relative}
+#tip{position:absolute;pointer-events:none;background:rgba(20,24,28,.92);color:#fff;font-size:12px;padding:5px 8px;border-radius:6px;max-width:240px;z-index:5}
+#tip[hidden]{display:none}
+details.cd{border:1px solid var(--line);border-radius:6px;padding:4px 8px;margin:5px 0;background:#fafbfc}
+details.cd[open]{background:#fff;border-color:#b9c0c8}
+details.cd summary{cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;list-style-position:inside;padding:3px 0}
+.crow{display:grid;grid-template-columns:1fr auto;gap:5px;margin-top:6px}
+.crow2{display:grid;grid-template-columns:62px auto 70px auto 1fr;gap:5px;align-items:center;margin-top:3px;font-size:12px;color:var(--mute)}
+.crow2 b{color:var(--ink);text-align:right;font-weight:600}
+.cd .li{margin-top:4px}
 .print-only{display:none}
 @media (max-width:1150px){
   body{height:auto}
