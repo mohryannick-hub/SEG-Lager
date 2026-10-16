@@ -56,7 +56,7 @@ function newItem(type, over) {
 function defaultState() {
   const s = {
     room: {w: 900, l: 600, h: 280, floorLimit: 500},
-    door: {wall: 'S', offset: 160, width: 100, slide: 'start', clear: 80},
+    door: {wall: 'S', offset: 160, width: 100, slide: 'start', side: 'in', clear: 80},
     pillars: [{id: uid(), x: 300, y: 250, w: 40, d: 40}, {id: uid(), x: 600, y: 250, w: 40, d: 40}],
     items: [], groups: [],
   };
@@ -84,7 +84,8 @@ function defaultState() {
 function normalizeState(s) {
   s.room = Object.assign({w: 900, l: 600, h: 280, floorLimit: 500}, s.room);
   const od = s.door || {};
-  s.door = Object.assign({wall: 'S', offset: 160, width: 100, slide: 'start', clear: 80}, od);
+  s.door = Object.assign({wall: 'S', offset: 160, width: 100, slide: 'start', side: 'in', clear: 80}, od);
+  if (s.door.side !== 'out') s.door.side = 'in';
   if (od.hinge && !od.slide) s.door.slide = od.hinge;
   delete s.door.hinge;
   s.pillars = s.pillars || [];
@@ -162,17 +163,19 @@ function sat(A, B, eps) {
   return true;
 }
 /* Schiebetür: Öffnung A–B in der Wand, Flügel läuft innen vor der Wand zur Seite "slide" */
-const DOOR_H = 210, LEAF_T = 5, LEAF_GAP = 3;
+const DOOR_H = 210, LEAF_T = 5, LEAF_GAP = 3, WALL_T = 12;
 function doorGeom() {
   const R = S.room, D = S.door, W = R.w, L = R.l;
   const defs = {N: [[0, 0], [1, 0], [0, 1], W], S: [[0, L], [1, 0], [0, -1], W], W: [[0, 0], [0, 1], [1, 0], L], E: [[W, 0], [0, 1], [-1, 0], L]};
   const [P0, u, n, len] = defs[D.wall];
   const at = (a, d) => [P0[0] + u[0] * a + n[0] * d, P0[1] + u[1] * a + n[1] * d];
+  const out = D.side === 'out', d0 = out ? -(WALL_T + LEAF_GAP + LEAF_T) : LEAF_GAP, d1 = out ? -(WALL_T + LEAF_GAP) : LEAF_GAP + LEAF_T;
   const a1 = D.slide === 'start' ? D.offset - D.width : D.offset + D.width, a2 = a1 + D.width;
   return {
     A: at(D.offset, 0), B: at(D.offset + D.width, 0), u, n, len, a1, a2,
-    leaf: [at(a1, LEAF_GAP), at(a2, LEAF_GAP), at(a2, LEAF_GAP + LEAF_T), at(a1, LEAF_GAP + LEAF_T)],
-    runway: [at(a1, 0), at(a2, 0), at(a2, LEAF_GAP + LEAF_T + 4), at(a1, LEAF_GAP + LEAF_T + 4)],
+    leaf: [at(a1, d0), at(a2, d0), at(a2, d1), at(a1, d1)],
+    // Laufweg nur relevant, wenn der Flügel innen im Raum läuft
+    runway: out ? null : [at(a1, 0), at(a2, 0), at(a2, LEAF_GAP + LEAF_T + 4), at(a1, LEAF_GAP + LEAF_T + 4)],
     zone: [at(D.offset, 0), at(D.offset + D.width, 0), at(D.offset + D.width, D.clear), at(D.offset, D.clear)],
     fits: a1 >= -0.5 && a2 <= len + 0.5,
   };
@@ -311,7 +314,7 @@ function analyze() {
       if (sat(polys[it.id], pil[k], 0.5)) { add('err', it.id, `${it.name} kollidiert mit Stützpfeiler`); out.bad.add(it.id); }
     });
     if (sat(polys[it.id], dg.zone, 0.5)) add('warn', it.id, `${it.name} versperrt den Durchgang an der Tür`);
-    if (sat(polys[it.id], dg.runway, 0.5)) add('warn', it.id, `${it.name} steht im Laufweg der Schiebetür`);
+    if (dg.runway && sat(polys[it.id], dg.runway, 0.5)) add('warn', it.id, `${it.name} steht im Laufweg der Schiebetür`);
     const fz = fronts[it.id];
     if (fz) {
       let hit = null;
@@ -475,6 +478,7 @@ function doorDefs() {
     {label: 'Wand', type: 'select', disabled: lk, options: Object.entries(WALLS), get: () => S.door.wall, set: v => { S.door.wall = v; }},
     num('Abstand vom Wandanfang', () => S.door.offset, v => { S.door.offset = v; }, {unit: 'cm', min: 0, step: 5, disabled: lk}),
     num('Breite der Öffnung', () => S.door.width, v => { S.door.width = v; }, {unit: 'cm', min: 50, step: 5}),
+    {label: 'Tür läuft', type: 'select', disabled: lk, options: [['in', 'innen (im Raum)'], ['out', 'außen (vor der Wand)']], get: () => S.door.side, set: v => { S.door.side = v; }},
     {label: 'Flügel schiebt sich', type: 'select', options: [['start', 'zum Wandanfang'], ['end', 'zum Wandende']], get: () => S.door.slide, set: v => { S.door.slide = v; }},
     num('Durchgang freihalten', () => S.door.clear, v => { S.door.clear = v; }, {unit: 'cm', min: 0, step: 10}),
   ];
